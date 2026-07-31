@@ -1,0 +1,1806 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>勤怠管理システム</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Noto Sans JP','Hiragino Sans',sans-serif;background:#f0f2f5;min-height:100vh}
+@media print{
+  .no-print{display:none!important}
+  .print-only{display:block!important}
+  /* 複数人を印刷する場合は1人1ページ。2人目以降の直前で改ページ（末尾に空白ページを作らない） */
+  .print-only+.print-only{page-break-before:always;break-before:page}
+  body{background:white;margin:0;padding:0}
+  @page{size:A4 portrait;margin:7mm}
+  /* 1ページに収めるため、表全体を分割禁止＋行の折り返しを最小化 */
+  .print-table{width:100%;border-collapse:collapse;font-size:9px;table-layout:fixed;page-break-inside:avoid}
+  .print-table tr{page-break-inside:avoid}
+  .print-table th,.print-table td{border:1px solid #555;padding:1.6px 3px;line-height:1.2;vertical-align:middle;overflow:hidden}
+  .print-table th{background:#d0d0d0;font-weight:bold;text-align:center}
+  .print-table tfoot td{background:#e8e8e8;font-weight:bold}
+  .print-table .c-nowrap{white-space:nowrap}
+  .print-table .c-wrap{white-space:normal;word-break:break-all}
+  .print-table .c-right{text-align:right}
+  .print-table .row-weekend td{background:#f4f4f4}
+  h2{font-size:11px!important;margin-bottom:2px!important}
+  p{font-size:8px!important;margin-bottom:2px!important}
+}
+.status-badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;letter-spacing:.05em;display:inline-block}
+.status-draft{background:#e8e8e8;color:#666}
+.status-submitted{background:#fff3cd;color:#856404}
+.status-approved{background:#d1fae5;color:#065f46}
+.status-rejected{background:#fee2e2;color:#991b1b}
+.btn{padding:8px 18px;border-radius:8px;border:none;cursor:pointer;font-family:inherit;font-size:14px;font-weight:600;transition:all .15s}
+.btn-primary{background:#1e3a5f;color:white}.btn-primary:hover{background:#16305a}
+.btn-success{background:#059669;color:white}.btn-success:hover{background:#047857}
+.btn-danger{background:#dc2626;color:white}.btn-danger:hover{background:#b91c1c}
+.btn-warning{background:#d97706;color:white}.btn-warning:hover{background:#b45309}
+.btn-outline{background:white;color:#1e3a5f;border:2px solid #1e3a5f}.btn-outline:hover{background:#f0f4f8}
+.card{background:white;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.07);padding:20px}
+.input-field{width:100%;padding:10px 14px;border:1.5px solid #d1d5db;border-radius:8px;font-family:inherit;font-size:14px;transition:border-color .15s;outline:none;color:#1e3a5f;background:white}
+.input-field:focus{border-color:#1e3a5f}
+.tab{padding:10px 14px;border:none;background:transparent;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;color:#888;border-bottom:3px solid transparent;transition:all .15s;white-space:nowrap}
+.tab.active{color:#1e3a5f;border-bottom-color:#1e3a5f}
+.table{width:100%;border-collapse:collapse}
+.table th{background:#f8fafc;color:#64748b;font-size:11px;font-weight:700;padding:10px 12px;text-align:left;border-bottom:2px solid #e2e8f0}
+.table td{padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px}
+.table tr:hover td{background:#fafbff}
+.toast-center{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);padding:24px 32px;border-radius:16px;color:white;font-weight:700;font-size:15px;z-index:9999;box-shadow:0 20px 60px rgba(0,0,0,.3);animation:fadeIn .2s ease;text-align:center;max-width:90vw;min-width:260px}
+.toast-center-warning{background:#d97706}
+.toast-center-success{background:#059669}
+@keyframes fadeIn{from{opacity:0;transform:translate(-50%,-55%)}to{opacity:1;transform:translate(-50%,-50%)}}
+.nav{background:#1e3a5f;color:white;padding:0 16px;display:flex;align-items:center;justify-content:space-between;height:56px;flex-wrap:wrap}
+.nav-brand{font-family:'Noto Sans JP','Hiragino Sans',sans-serif;font-size:15px;font-weight:700;letter-spacing:.08em}
+.login-btn{display:flex;align-items:center;gap:12px;padding:13px 14px;border:2px solid #e8ecf0;border-radius:14px;background:white;cursor:pointer;text-align:left;font-family:inherit;transition:all .15s;width:100%}
+.login-btn:hover{border-color:#1e3a5f;background:#f8faff}
+.pin-key{height:52px;border-radius:12px;border:2px solid #e2e8f0;font-size:20px;font-weight:700;color:#1e3a5f;cursor:pointer;font-family:inherit;transition:all .1s;background:white}
+.pin-key:hover{background:#f0f4ff}.pin-key.del{background:#fee2e2;color:#dc2626}.pin-key.del:hover{background:#fecaca}
+.stat-box{background:white;border-radius:12px;padding:14px 16px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+/* スマホ対応 */
+@media(max-width:600px){
+  .card{padding:14px;border-radius:12px}
+  .btn{padding:8px 12px;font-size:13px}
+  .nav-brand{font-size:13px}
+  .nav{height:auto;min-height:56px;padding:8px 16px;gap:8px}
+  .table th,.table td{padding:8px 8px;font-size:11px}
+  .tab{padding:8px 10px;font-size:12px}
+  .stat-box{padding:12px 14px}
+  .pin-key{height:48px;font-size:18px}
+  .stat-grid{grid-template-columns:repeat(2,1fr)!important}
+  .emp-header{flex-wrap:wrap!important;gap:8px!important}
+  .emp-header-left{flex-wrap:wrap!important;gap:8px!important}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const {useState,useEffect,useRef,createElement:e} = React;
+
+// ===== CONSTANTS =====
+const INITIAL_EMPLOYEES = [
+  {id:1,name:"小川 正訓",loginId:"masakunipapa@docomo.ne.jp",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:100000,department:"建設部門",store:"モノレール"},
+  {id:2,name:"黒田 高史",loginId:"kurodatakashi5162@gmail.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:100000,department:"建設部門",store:"モノレール"},
+  {id:3,name:"高木 俊輔",loginId:"softball0829@icloud.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:215000,department:"営業部門",store:"営業"},
+  {id:4,name:"渡辺 航",loginId:"watanabe0720ko@gmail.com",role:"employee",hourlyWage:1200,department:"飲食部門",store:"JP BAR KING"},
+  {id:5,name:"安西 泰基",loginId:"taikitan1118@gmail.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:215000,department:"営業部門",store:"営業"},
+  {id:6,name:"吉田 未悠",loginId:"seojun168261@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"カリッジュ児島店"},
+  {id:7,name:"赤田 英哉",loginId:"hideya411@icloud.com",role:"employee",hourlyWage:1050,department:"飲食部門",store:"カリッジュ児島店"},
+  {id:8,name:"水谷 なつみ",loginId:"natsumishuigu735@gmail.com",role:"employee",hourlyWage:1200,department:"飲食部門",store:"GOLF BAR KING"},
+  {id:9,name:"山村 紀幸",loginId:"no2569925@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"GOLF BAR KING"},
+  {id:10,name:"酒井 うらら",loginId:"ww843j@icloud.com",role:"employee",hourlyWage:1050,department:"飲食部門",store:"カリッジュ児島店"},
+  {id:11,name:"久壽米木 聡伍",loginId:"megi.sogo4@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
+  {id:12,name:"木村 天翔",loginId:"ten20051014@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
+  {id:13,name:"SAWAN REYMARK ULAW",loginId:"sawanreymark8@gmail.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:182000,department:"建設部門",store:"モノレール",bilingual:true},
+  {id:14,name:"OBIDOS NINO CANEDO",loginId:"obidosnino23@gmail.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:182000,department:"建設部門",store:"モノレール",bilingual:true},
+  {id:15,name:"浅川 友歌",loginId:"yu222.hama@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
+  {id:16,name:"芝田 利成",loginId:"shibasuko@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"JP BAR KING"},
+  {id:17,name:"友方 律臣",loginId:"ritu2006@softbank.ne.jp",role:"employee",hourlyWage:1100,department:"飲食部門",store:"JP BAR KING"},
+  {id:18,name:"平野 あのん",loginId:"anonpingye@gmail.com",role:"employee",hourlyWage:1050,department:"飲食部門",store:"カリッジュ児島店"},
+  {id:19,name:"野原 すみれ",loginId:"sumire.nobara1116@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"GOLF BAR KING"},
+  {id:20,name:"原 俊幸",loginId:"t.h-4valve-dohc-rs-turbo@ezweb.ne.jp",role:"employee",hourlyWage:1100,department:"飲食部門",store:"カリッジュ児島店"},
+  {id:21,name:"立石 羚心",loginId:"1111@1111",role:"employee",hourlyWage:1100,department:"飲食部門",store:"GOLF BAR KING"},
+];
+
+const INITIAL_ADMINS = [
+  {id:101,name:"小川 孝記",loginId:"tribekoki@yahoo.co.jp",role:"superadmin",hourlyWage:1000,payType:"monthly",monthlyWage:1200000,department:"建設部門",store:"モノレール",managedStores:["モノレール","GOLF BAR KING","JP BAR KING","Qlotho by KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","営業"]},
+  {id:102,name:"杉本 隆",loginId:"sugimoto_t@tribe-international.co.jp",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:574000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:103,name:"西田 卓司",loginId:"tribenishida@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:420000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:104,name:"栗原 忍武",loginId:"swell.tribe@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:420000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:105,name:"牧 大心",loginId:"dai--.12.8@docomo.ne.jp",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:394000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:106,name:"谷本 壮磨",loginId:"t.souma0604@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:300000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:107,name:"中村 真弓",loginId:"yutaka_fantasista0623@yahoo.co.jp",role:"superadmin",hourlyWage:1300,department:"建設部門",store:"モノレール",managedStores:["モノレール","GOLF BAR KING","JP BAR KING","Qlotho by KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","営業"]},
+  {id:108,name:"稲原 信治",loginId:"paddle.17@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:340000,department:"飲食部門",store:"GOLF BAR KING",managedStores:["GOLF BAR KING","JP BAR KING"]},
+  {id:109,name:"住岡 昇悟",loginId:"s.shogo.1327@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:400000,department:"美容院部門",store:"Qlotho by KING",managedStores:["Qlotho by KING"]},
+  {id:110,name:"小川 あかり",loginId:"0417.akari567@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:387700,department:"飲食部門",store:"カリッジュ児島店",managedStores:["カリッジュ児島店","KOJIMA FOK COFFEE"]},
+  {id:111,name:"森脇 柊斗",loginId:"yudikante241@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:280000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:112,name:"三木 和花菜",loginId:"wakaini1030@yahoo.co.jp",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:209900,department:"飲食部門",store:"カリッジュ児島店",managedStores:["カリッジュ児島店","KOJIMA FOK COFFEE"]},
+  {id:113,name:"銀山 晴己",loginId:"gin.haru@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:260000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:114,name:"星野 京佳",loginId:"morikyo93@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:300000,department:"美容院部門",store:"Qlotho by KING",managedStores:["Qlotho by KING"]},
+  {id:115,name:"中西 大樹",loginId:"daikin46.k99@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:300000,department:"飲食部門",store:"KYOUEN",managedStores:["KYOUEN"]},
+  {id:116,name:"守谷 龍哉",loginId:"moritatsu.toripippi@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:280000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:117,name:"谷村 栄祐",loginId:"es210422@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:0,department:"飲食部門",store:"JP BAR KING",managedStores:["JP BAR KING"]},
+  {id:118,name:"田野口 凌",loginId:"ryo_shinogibar@outlook.jp",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:0,department:"飲食部門",store:"KYOUEN",managedStores:["KYOUEN"]},
+];
+const ALL_STORES = ["GOLF BAR KING","JP BAR KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","イベント出店","Qlotho by KING","モノレール","営業"];
+const INACTIVE_STORES = ["架設中"];
+const DEPARTMENT_STORES = {
+  "建設部門":["モノレール"],"飲食部門":["GOLF BAR KING","JP BAR KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","イベント出店"],
+  "美容院部門":["Qlotho by KING"],"アパレル部門":["架設中"],"営業部門":["営業"],
+};
+const OVERTIME_THRESHOLD=8;
+const INITIAL_PASSWORD="000000";  // 初期パスワード（初回ログイン後に変更必須）
+const PASSWORD_MIN=6;             // 新パスワードの最低文字数
+const TODAY=new Date();
+const formatDate=d=>{const dt=d instanceof Date?d:new Date(d);return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`};
+const todayStr=formatDate(TODAY);
+
+// ステータス定義
+const S_LABEL={draft:"下書き",submitted:"承認待ち",approved:"承認済",rejected:"差戻中"};
+const S_LABEL_S={draft:"下書",submitted:"承認待ち",approved:"承認済",rejected:"差戻中"};
+const S_CLASS={draft:"status-draft",submitted:"status-submitted",approved:"status-approved",rejected:"status-rejected"};
+
+// バイリンガル対象スタッフID（SAWAN・OBIDOS）
+const BILINGUAL_IDS=[13,14];
+// 建設部門（移動時間の対象）。モノレール所属者は店舗名でも判定されるため、
+// 所属が変わっても対応できるよう、ここは補助的な指定にとどめる
+const CONSTRUCTION_IDS=[1,2,13,14,101,102,103,104,105,106,107,111,113,116];
+// ラベル定義（日本語 / English）
+function L(ja,en,isBi){return isBi?`${ja} / ${en}`:ja;}
+function loadLS(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}}
+function saveLS(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}
+
+// ===== パスワード認証（SHA-256ハッシュ化して保存） =====
+async function sha256(str){
+  try{
+    const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+  }catch(e){
+    // crypto.subtle が使えない環境（非https等）向けの簡易フォールバック
+    let h=5381;for(let i=0;i<str.length;i++){h=((h<<5)+h+str.charCodeAt(i))>>>0;}
+    return "fb_"+h.toString(16)+"_"+str.length;
+  }
+}
+// passHash が null/undefined = 初期パスワードのまま（初回ログイン後に変更必須）
+async function verifyPassword(emp,input){
+  if(!emp)return false;
+  if(emp.passHash==null)return input===INITIAL_PASSWORD;
+  return (await sha256(input))===emp.passHash;
+}
+// 旧データ（PIN方式）→ ID/PW方式への移行。loginIdが無ければ初期リスト or 自動生成で補完
+function migrateAuth(list,initialList){
+  return (list||[]).map(emp=>{
+    const init=(initialList||[]).find(x=>x.id===emp.id);
+    return {...emp,
+      // 旧データに副管理者が残っていれば管理者に変換（副管理者は廃止）
+      role:emp.role==="subadmin"?"admin":emp.role,
+      loginId:emp.loginId||init?.loginId||("user"+emp.id+"@tribe.jp"),
+      passHash:emp.passHash!==undefined?emp.passHash:null};
+  });
+}
+
+const GAS_URL="https://script.google.com/macros/s/AKfycbz_YZdXZ20_PIUR6hofmuJLCLX2gh-CIug7wNC3HRKHT835QpzVx70nPJHZTgb_vowh/exec";
+
+// ===== GAS通信関数 =====
+async function gasGet(action,params={}){
+  try{
+    const q=new URLSearchParams({action,...params}).toString();
+    const res=await fetch(`${GAS_URL}?${q}`);
+    return await res.json();
+  }catch(e){console.error("GAS GET error:",e);return{success:false,error:e.message};}
+}
+async function gasPost(action,data={}){
+  try{
+    const res=await fetch(GAS_URL,{method:"POST",body:JSON.stringify({action,...data})});
+    return await res.json();
+  }catch(e){console.error("GAS POST error:",e);return{success:false,error:e.message};}
+}
+// レコード削除をGASにも通知（リセット・差戻取消でスプレッドシートと不整合にならないように）
+function gasDeleteRecord(empId,date){gasPost("deleteRecord",{empId,date});}
+
+// スタッフ情報の構造を変更した際にバージョンを上げる（勤怠レコードは保持される）
+// v15: PIN方式→ID/パスワード方式へ移行、オーナーの担当店舗にモノレール等を追加
+// v16: 副管理者を廃止（役割は 一般／管理者／オーナー の3種類）
+// v17: 本番スタッフ37名のデータへ入れ替え
+// v18: 原・立石を追加（39名）
+const DATA_VERSION="v18";
+if(localStorage.getItem("kintai_data_version")!==DATA_VERSION){
+  localStorage.removeItem("kintai_employees");
+  localStorage.removeItem("kintai_admins");
+  localStorage.setItem("kintai_data_version",DATA_VERSION);
+  // 次回からはデータを保持
+}
+
+// 管理者による締め承認済みフラグ
+function getAdminCloseKey(empId,month){return `kintai_admin_closed_${empId}_${month}`;}
+function isAdminClosed(empId,month){try{return localStorage.getItem(getAdminCloseKey(empId,month))==="1";}catch{return false;}}
+function setAdminClosed(empId,month){try{localStorage.setItem(getAdminCloseKey(empId,month),"1");}catch{}}
+
+// 「HH:MM」→分に変換
+function toMin(t){
+  if(!t||typeof t!=="string"||t.length<4)return null;
+  const h=parseInt(t.slice(0,2),10),m=parseInt(t.slice(3,5),10);
+  if(!Number.isFinite(h)||!Number.isFinite(m))return null;
+  return h*60+m;
+}
+// 重なり合う区間をまとめる（休憩の二重控除を防ぐ）
+function mergeRanges(ranges){
+  if(ranges.length===0)return[];
+  const sorted=[...ranges].sort((a,b)=>a[0]-b[0]);
+  const out=[sorted[0].slice()];
+  for(let i=1;i<sorted.length;i++){
+    const cur=sorted[i],last=out[out.length-1];
+    if(cur[0]<=last[1])last[1]=Math.max(last[1],cur[1]);
+    else out.push(cur.slice());
+  }
+  return out;
+}
+// 2区間の重なり（分）
+const overlapMin=(a1,a2,b1,b2)=>Math.max(0,Math.min(a2,b2)-Math.max(a1,b1));
+
+function calcRecord(rec){
+  const ZERO={workMinutes:0,overtimeMinutes:0,lateNightMinutes:0,pay:0};
+  if(!rec||!rec.clockIn||!rec.clockOut)return ZERO;
+  const inMin=toMin(rec.clockIn);
+  let outMin=toMin(rec.clockOut);
+  if(inMin==null||outMin==null)return ZERO;
+  // 出勤と退勤が同じ時刻＝勤務0分として扱う（打刻ミス対策）
+  if(outMin===inMin)return ZERO;
+  // 退勤が出勤より前なら翌日にまたぐ勤務とみなす
+  if(outMin<inMin)outMin+=1440;
+  const total=Math.min(outMin-inMin,24*60);
+  const shiftEnd=inMin+total;
+
+  // 休憩・移動を「シフト開始からの時間軸」に正規化して区間化
+  const toRanges=arr=>{
+    const out=[];
+    (arr||[]).forEach(x=>{
+      if(!x||!x.start||!x.end)return;
+      let s=toMin(x.start),en=toMin(x.end);
+      if(s==null||en==null)return;
+      if(s===en)return;                // 同時刻＝0分として無視
+      // 日をまたいだ時刻をシフト軸に合わせる
+      if(s<inMin)s+=1440;
+      if(en<inMin)en+=1440;
+      if(en<=s)en+=1440;
+      // 勤務時間の範囲内にクランプ（範囲外の入力で給与が狂わないように）
+      const cs=Math.max(s,inMin),ce=Math.min(en,shiftEnd);
+      if(ce>cs)out.push([cs,ce]);
+    });
+    return mergeRanges(out);
+  };
+
+  const breakRanges=toRanges(rec.breaks);
+  let bm=breakRanges.reduce((n,[s,e2])=>n+(e2-s),0);
+
+  // 移動時間（モノレール勤務のみ）。休憩と重なる分は二重控除しない
+  const isMonorail=isMonorailWork(rec.empId,rec.store);
+  const deductRanges=mergeRanges([...breakRanges,...toRanges(isMonorail?rec.travelTimes:[])]);
+  let dm=deductRanges.reduce((n,[s,e2])=>n+(e2-s),0);
+  // 旧データ（breakMinutesのみ保存されている場合）の互換
+  if(dm===0&&rec.breakMinutes)dm=Math.max(0,Number(rec.breakMinutes)||0);
+
+  const wm=Math.max(0,total-dm);
+  const om=Math.max(0,wm-OVERTIME_THRESHOLD*60);
+
+  // 深夜帯（22:00〜翌5:00）を前日・当日・翌日ぶん用意して重なりを合算
+  let lnWork=0,lnDeduct=0;
+  for(let k=-1;k<=1;k++){
+    const ns=1320+1440*k, ne=1740+1440*k;   // 22:00〜29:00(=翌5:00)
+    lnWork+=overlapMin(inMin,shiftEnd,ns,ne);
+    deductRanges.forEach(([s,e2])=>{lnDeduct+=overlapMin(s,e2,ns,ne);});
+  }
+  const ln=Math.min(wm,Math.max(0,lnWork-lnDeduct));
+
+  // 給与：通常×1.0 残業のみ×1.25 深夜のみ×1.25 深夜残業×1.5
+  const lnOt=Math.min(ln,om),lnOnly=ln-lnOt,otOnly=om-lnOt,normal=wm-om-lnOnly;
+  const wage=Math.max(0,rec.hourlyWage!=null?Number(rec.hourlyWage)||0:1000),pm=wage/60;
+  const pay=Math.round(normal*pm+otOnly*pm*1.25+lnOnly*pm*1.25+lnOt*pm*1.5);
+  return{workMinutes:Math.round(wm),overtimeMinutes:Math.round(om),lateNightMinutes:Math.round(ln),pay:Number.isFinite(pay)?pay:0};
+}
+function mHHMM(m){return `${Math.floor(m/60)}時間${String(m%60).padStart(2,"0")}分`}
+
+// ===== 共通ヘルパー（同じ判定・整形が各所で必要なためまとめる） =====
+// モノレール勤務か（移動時間の対象になるか）
+function isMonorailWork(empId,store){
+  return CONSTRUCTION_IDS.includes(empId)||store==="モノレール";
+}
+// 「移動」列を表示するか（対象スタッフ、またはその月に移動の記録がある）
+function needTravelCol(emp,recs){
+  if(!emp)return false;
+  if(isMonorailWork(emp.id,emp.store))return true;
+  return (recs||[]).some(r=>(r.travelTimes||[]).some(t=>t.start&&t.end));
+}
+// 休憩・移動の時間帯を「12:00〜13:00/15:00〜15:30」の形に整える
+function rangeText(arr,fallback){
+  const v=(arr||[]).filter(x=>x.start&&x.end);
+  return v.length?v.map(x=>x.start+"〜"+x.end).join("/"):(fallback||"—");
+}
+
+// ===== HELP MODAL（使い方） =====
+function HelpModal({isAdmin,isOwner,onClose}){
+  const [tab,setTab]=useState("basic");
+  const box=(kind,children)=>{
+    const c={info:["#eff6ff","#bfdbfe","#1e40af"],warn:["#fef3c7","#fcd34d","#92400e"],
+      ok:["#d1fae5","#6ee7b7","#065f46"],own:["#f5f3ff","#ddd6fe","#5b21b6"]}[kind];
+    return e("div",{style:{background:c[0],border:"1.5px solid "+c[1],color:c[2],
+      borderRadius:10,padding:"11px 13px",margin:"11px 0",fontSize:12.5,lineHeight:1.75}},children);
+  };
+  const h=(n,t)=>e("div",{style:{display:"flex",alignItems:"center",gap:9,margin:"20px 0 10px"}},
+    e("div",{style:{width:26,height:26,borderRadius:"50%",background:"#1e3a5f",color:"white",fontSize:13,
+      fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}},n),
+    e("div",{style:{fontSize:15,fontWeight:700,color:"#1e3a5f"}},t));
+  const p=t=>e("p",{style:{fontSize:13.5,lineHeight:1.8,margin:"7px 0"}},t);
+  const list=(items,ordered)=>e(ordered?"ol":"ul",{style:{margin:"9px 0 9px 20px"}},
+    ...items.map((x,i)=>e("li",{key:i,style:{fontSize:13.5,marginBottom:6,lineHeight:1.75}},x)));
+  const qa=(q,a)=>e("div",{style:{marginBottom:14}},
+    e("div",{style:{fontSize:13.5,fontWeight:700,color:"#1e3a5f",marginBottom:4}},q),
+    e("div",{style:{fontSize:13,color:"#475569",paddingLeft:12,borderLeft:"3px solid #e2e8f0",lineHeight:1.8}},a));
+  const bdg=(txt,kind,k)=>{
+    const c={sub:["#fef3c7","#92400e"],app:["#d1fae5","#065f46"],rej:["#fee2e2","#991b1b"]}[kind];
+    return e("span",{key:k||txt,style:{display:"inline-block",fontSize:11,fontWeight:700,borderRadius:20,
+      padding:"2px 10px",background:c[0],color:c[1],margin:"0 3px"}},txt);
+  };
+  const tag=(t,k)=>e("span",{key:k||t,style:{display:"inline-block",background:"#1e3a5f",color:"white",fontSize:11,
+    fontWeight:700,borderRadius:5,padding:"2px 8px",margin:"0 4px"}},t);
+
+  // ===== 基本（全員） =====
+  const basic=e("div",null,
+    h(1,"ログインする"),
+    e("div",{style:{background:"#f8fafc",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"11px 13px",fontSize:13}},
+      e("div",{style:{display:"flex",justifyContent:"space-between",padding:"4px 0"}},
+        e("span",{style:{color:"#64748b",fontWeight:600}},"ログインID"),
+        e("span",{style:{fontWeight:700,color:"#1e3a5f"}},"自分のメールアドレス")),
+      e("div",{style:{display:"flex",justifyContent:"space-between",padding:"4px 0"}},
+        e("span",{style:{color:"#64748b",fontWeight:600}},"初期パスワード"),
+        e("span",{style:{fontWeight:700,color:"#1e3a5f"}},INITIAL_PASSWORD))
+    ),
+    p("はじめてログインすると、新しいパスワードを決める画面が出ます。"),
+    box("warn",["パスワードは",e("b",{key:"b"},PASSWORD_MIN+"文字以上"),"で設定してください。初期パスワードのままにはできません。"]),
+
+    h(2,"勤務を入力して提出する"),
+    p(["仕事が終わったら、",tag("📅 日次入力"),"でその日の分を入力します。"]),
+    list([
+      ["対象店舗","…働いたお店を選ぶ"],
+      ["対象日","…働いた日を選ぶ（今日ならそのまま）"],
+      ["出勤・退勤","…実際の時刻を入れる"],
+      ["休憩","…休憩した時間を入れる（なければ空のまま）"],
+      ["提出する","ボタンを押す"],
+    ].map(([a,b2],i)=>e("span",{key:i},e("b",null,a),b2)),true),
+    box("info",[e("b",{key:"b"},"夜またぎも大丈夫です。"),e("br",{key:"br"}),
+      "17:00〜翌2:00の勤務なら、出勤17:00・退勤2:00と入れてください。自動で翌日の退勤として計算されます。"]),
+    box("warn",[e("b",{key:"b"},"提出を忘れずに。"),e("br",{key:"br"}),
+      "入力しただけでは記録されません。かならず「提出する」を押してください。"]),
+
+    h(3,"状態の見かた"),
+    p("提出したあと、日ごとに次のどれかが表示されます。"),
+    e("div",{style:{fontSize:13.5,lineHeight:2.2}},
+      bdg("承認待ち","sub","s1"),"提出済み。確認待ちです",e("br",{key:"br1"}),
+      bdg("承認済","app","s2"),"確認が終わりました",e("br",{key:"br2"}),
+      bdg("差戻中","rej","s3"),"修正が必要です"
+    ),
+    box("warn",["差戻中になったら、内容を直してもう一度「提出する」を押してください。"]),
+
+    h(4,"こんなときは"),
+    qa("同じ日に2つのお店で働いた",
+      ["「同日に別店舗の出勤がある」にチェックを入れると、時間とお店を選んで追加できます。",e("br",{key:"1"}),e("br",{key:"2"}),
+       e("b",{key:"3"},"出勤・退勤は1日の最初と最後"),"を入れてください。お店の移動でできた空き時間は",
+       e("b",{key:"4"},"休憩に入れます"),"。",e("br",{key:"5"}),e("br",{key:"6"}),
+       "例）カリッジュ 9:00〜17:00、GOLF BAR 21:00〜24:00 の場合",e("br",{key:"7"}),
+       "出勤 9:00 ／ 退勤 24:00 ／ 休憩 17:00〜21:00"]),
+    qa("入力を間違えた",
+      [bdg("承認待ち","sub"),"のうちは直せます。直して「提出する」を押してください。",e("br",{key:"1"}),
+       bdg("承認済","app"),"になったあとは直せないので、管理者に連絡してください。"]),
+    qa("前の日の分を入れ忘れた","対象日を変えれば、過去の日も入力できます。"),
+    qa("パスワードを忘れた","オーナーに連絡してください。初期パスワードに戻してもらえます。"),
+    qa("「勤務時間外の休憩があります」と出る","休憩の時間が、出勤〜退勤の外にはみ出しています。時刻を確認してください。"),
+    qa("日付を変えたら入力が消えた","提出前に日付を変えると入力は消えます。確認が出たら「キャンセル」を押してください。"),
+
+    h(5,"その月の記録を見る"),
+    p([tag("📊 月次一覧"),"を開くと、その月の勤務が一覧で見られます。"]),
+    box("ok","月末になったら、抜けている日がないか確認しておくと安心です。")
+  );
+
+  // ===== 管理者向け =====
+  const adminGuide=e("div",null,
+    h(1,"承認する"),
+    p([tag("✅ 承認管理"),"を開きます。"]),
+    list(["月を選ぶ","スタッフを選ぶ（承認待ちの件数が出ます）","内容を確認する",
+      ["承認",", または問題があれば","差戻","を押す"].join("")],true),
+    box("ok","問題がなければ「✓ 承認待ちを一括承認」で、その人の未処理をまとめて承認できます。"),
+    box("warn",[e("b",{key:"b"},"差し戻すときは理由を伝えてください。"),e("br",{key:"br"}),
+      "システムからは通知が飛びません。口頭やLINEなどで伝えると行き違いが防げます。"]),
+    qa("確認するポイント",
+      ["・出退勤の時刻が実際と合っているか",e("br",{key:"1"}),
+       "・休憩が入っているか（長時間なのに休憩なしは要確認）",e("br",{key:"2"}),
+       "・対象店舗が正しいか",e("br",{key:"3"}),
+       "・出勤しているのに入力されていない日がないか"]),
+
+    h(2,"承認したあとの修正"),
+    p([bdg("承認済","app"),"になると、本人は修正できなくなります。"]),
+    p("直す必要が出たときは、承認管理から「差戻」を押してください。本人が修正できるようになります。"),
+    box("info","差し戻したあと元に戻したい場合は、「差戻を取り消す」で承認待ちに戻せます。"),
+
+    h(3,"月締めをする"),
+    p("その月の承認がすべて終わったら月締めをします。締めるとスタッフは修正できなくなります。"),
+    box("warn",[e("b",{key:"b"},"差戻中が残っていると締められません。"),e("br",{key:"br"}),
+      "すべて承認するか、不要なら取り消してから実行してください。"]),
+    box("info","締めたあとに修正が必要になったら、月締めを解除すれば元に戻せます。"),
+
+    h(4,"集計を確認・印刷する"),
+    p([tag("📊 月次一覧"),"で、スタッフごとの合計が見られます。"]),
+    list(["勤務日数・実働時間","残業時間（1日8時間を超えた分）","深夜時間（22:00〜翌5:00）","金額（管理者・オーナーのみ）"]),
+    box("info",[e("b",{key:"b"},"集計されるのは承認済みだけです。"),e("br",{key:"br"}),
+      "承認待ちのままだと合計に入りません。月末は承認漏れがないか確認してください。"]),
+
+    h(5,"給与の考え方"),
+    e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:13,margin:"9px 0"}},
+      e("thead",null,e("tr",null,...["項目","計算"].map(x=>e("th",{key:x,style:{border:"1px solid #e2e8f0",
+        padding:"6px 9px",background:"#f8fafc",fontWeight:700,color:"#1e3a5f",fontSize:12,textAlign:"left"}},x)))),
+      e("tbody",null,...[["通常","時給 × 1.00"],["残業（1日8時間超）","時給 × 1.25"],
+        ["深夜（22:00〜翌5:00）","時給 × 1.25"],["深夜かつ残業","時給 × 1.50"]]
+        .map(([a,b2],i)=>e("tr",{key:i},
+          e("td",{style:{border:"1px solid #e2e8f0",padding:"6px 9px"}},a),
+          e("td",{style:{border:"1px solid #e2e8f0",padding:"6px 9px"}},b2))))
+    ),
+    box("info",["時間は",e("b",{key:"b"},"1分単位"),"で計算します。切り上げ・切り捨てはしません。",e("br",{key:"br"}),
+      "月給制の方は、承認済みの勤務が1日でもあればその月は満額です。"]),
+
+    isOwner&&e("div",null,
+      h(6,"スタッフを追加する"),
+      p([tag("👥 従業員設定"),"から追加します。"]),
+      list(["氏名","ログインID（本人のメールアドレス）","部署・所属店舗","役割（一般／管理者／オーナー）","給与形態（時給／月給）と金額"],true),
+      box("own",["追加した人の初期パスワードは ",e("b",{key:"b"},INITIAL_PASSWORD)," です。本人に伝えてください。"]),
+      box("warn",[e("b",{key:"b"},"ログインIDは全員バラバラにしてください。"),"同じものは登録できません。"]),
+
+      h(7,"オーナーの操作"),
+      qa("パスワードを忘れたと言われた","従業員設定から、その人の「PWリセット」を押すと初期パスワードに戻ります。"),
+      qa("スタッフが辞めた","従業員設定から削除できます。過去の勤怠記録は残ります。"),
+      qa("時給が変わった",["従業員設定の「編集」から変更します。",e("b",{key:"b"},"過去の月の金額は変わりません"),"。"]),
+      qa("管理者を増やしたい",
+        ["従業員設定で役割を「管理者」に変更し、担当店舗を選びます。",e("br",{key:"1"}),e("br",{key:"2"}),
+         "同じ店舗に管理者が2人いると",e("b",{key:"3"},"お互いの勤怠を承認し合えます"),"。"]),
+      qa("誰が承認できるのか",
+        ["・管理者 → 担当店舗のスタッフ、および同じ店舗の他の管理者",e("br",{key:"1"}),
+         "・オーナー → 全員（自分自身も含む）",e("br",{key:"2"}),
+         "・自分で自分は承認できません（オーナーを除く）"])
+    )
+  );
+
+  return e("div",{onClick:onClose,style:{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",
+    zIndex:900,display:"flex",alignItems:"flex-end",justifyContent:"center"}},
+    e("div",{onClick:ev=>ev.stopPropagation(),style:{background:"white",borderRadius:"18px 18px 0 0",
+      width:"100%",maxWidth:600,maxHeight:"92vh",display:"flex",flexDirection:"column"}},
+      e("div",{style:{padding:"16px 18px 0",borderBottom:"1px solid #e2e8f0"}},
+        e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},
+          e("div",{style:{fontSize:17,fontWeight:700,color:"#1e3a5f"}},"❓ 使い方"),
+          e("button",{onClick:onClose,style:{border:"none",background:"#f1f5f9",color:"#475569",
+            width:30,height:30,borderRadius:"50%",fontSize:15,cursor:"pointer",fontFamily:"inherit"}},"✕")
+        ),
+        isAdmin&&e("div",{style:{display:"flex",gap:4}},
+          ...[["basic","基本の使い方"],["admin","承認・管理"]].map(([k,l])=>
+            e("button",{key:k,onClick:()=>setTab(k),style:{padding:"9px 14px",border:"none",
+              background:"transparent",fontFamily:"inherit",fontSize:13.5,fontWeight:700,cursor:"pointer",
+              color:tab===k?"#1e3a5f":"#94a3b8",borderBottom:tab===k?"2.5px solid #1e3a5f":"2.5px solid transparent"}},l))
+        )
+      ),
+      e("div",{style:{padding:"4px 18px 26px",overflowY:"auto",flex:1}},
+        (!isAdmin||tab==="basic")?basic:adminGuide
+      )
+    )
+  );
+}
+// ===== PASSWORD CHANGE MODAL =====
+function PasswordChangeModal({currentUser,onDone,onCancel,isForced}){
+  const [p1,setP1]=useState("");
+  const [p2,setP2]=useState("");
+  const [showPw,setShowPw]=useState(false);
+  const [err,setErr]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const isBi=currentUser?.bilingual===true||BILINGUAL_IDS.includes(currentUser?.id);
+  const submit=async()=>{
+    if(busy)return;
+    if(p1.length<PASSWORD_MIN){setErr(L("パスワードは"+PASSWORD_MIN+"文字以上にしてください","At least "+PASSWORD_MIN+" characters",isBi));return;}
+    if(p1===INITIAL_PASSWORD){setErr(L("初期パスワードは使用できません","Initial password is not allowed",isBi));return;}
+    if(p1!==p2){setErr(L("パスワードが一致しません。もう一度入力してください。","Passwords do not match.",isBi));setP2("");return;}
+    setBusy(true);
+    const h=await sha256(p1);
+    setBusy(false);
+    onDone(h);
+  };
+  const inputStyle={width:"100%",padding:"11px 14px",border:"1.5px solid #d1d5db",borderRadius:8,fontFamily:"inherit",fontSize:15,outline:"none"};
+  return e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",backdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}},
+    e("div",{style:{background:"white",borderRadius:20,padding:28,width:360,maxWidth:"95vw"}},
+      e("div",{style:{fontSize:32,marginBottom:8,textAlign:"center"}},"🔐"),
+      e("h3",{style:{fontSize:16,fontWeight:700,color:"#1e3a5f",marginBottom:6,textAlign:"center"}},
+        isForced?L("パスワードの設定が必要です","Password Setup Required",isBi):L("パスワード変更","Change Password",isBi)
+      ),
+      e("p",{style:{fontSize:12,color:"#64748b",marginBottom:16,textAlign:"center"}},
+        isForced
+          ?L("初期パスワードのままです。新しいパスワードを設定してください。","You are using the initial password. Please set a new one.",isBi)
+          :L("新しいパスワードを設定してください。","Please set a new password.",isBi)
+      ),
+      e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("新しいパスワード（"+PASSWORD_MIN+"文字以上）","New Password ("+PASSWORD_MIN+"+ chars)",isBi)),
+      e("input",{type:showPw?"text":"password",value:p1,onChange:ev=>{setP1(ev.target.value);setErr(null);},style:Object.assign({},inputStyle,{marginBottom:10}),autoComplete:"new-password"}),
+      e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("もう一度入力","Confirm Password",isBi)),
+      e("input",{type:showPw?"text":"password",value:p2,onChange:ev=>{setP2(ev.target.value);setErr(null);},onKeyDown:ev=>{if(ev.key==="Enter")submit();},style:Object.assign({},inputStyle,{marginBottom:8}),autoComplete:"new-password"}),
+      e("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#64748b",marginBottom:10,cursor:"pointer"}},
+        e("input",{type:"checkbox",checked:showPw,onChange:ev=>setShowPw(ev.target.checked)}),L("パスワードを表示","Show password",isBi)
+      ),
+      err&&e("p",{style:{color:"#dc2626",fontSize:12,fontWeight:700,marginBottom:10}},err),
+      e("button",{className:"btn btn-primary",style:{width:"100%"},onClick:submit,disabled:busy},busy?L("設定中…","Saving…",isBi):L("この内容で設定する","Set Password",isBi)),
+      e("button",{onClick:onCancel,style:{width:"100%",marginTop:10,fontSize:12,color:"#94a3b8",background:"none",border:"none",cursor:"pointer",textDecoration:"underline",fontFamily:"inherit"}},
+        isForced?L("← TOPページに戻る","← Back to Top",isBi):L("← 戻る","← Back",isBi)
+      )
+    )
+  );
+}
+
+// ===== LOGIN SCREEN（ID・パスワード方式） =====
+function LoginScreen({employees,admins,onLogin,onAdminLogin}){
+  const [loginId,setLoginId]=useState("");
+  const [pw,setPw]=useState("");
+  const [showPw,setShowPw]=useState(false);
+  const [err,setErr]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const doLogin=async()=>{
+    if(busy)return;
+    const idv=loginId.trim().toLowerCase();
+    if(!idv||!pw){setErr("IDとパスワードを入力してください");return;}
+    setBusy(true);
+    const all=[...employees,...(admins||[])];
+    const emp=all.find(x=>String(x.loginId||"").toLowerCase()===idv);
+    const ok=emp?await verifyPassword(emp,pw):false;
+    setBusy(false);
+    if(!ok){setErr("IDまたはパスワードが違います");setPw("");return;}
+    if(emp.role==="admin"||emp.role==="superadmin")onAdminLogin(emp);
+    else onLogin(emp);
+  };
+  return e("div",{style:{minHeight:"100vh",background:"#f0f2f5",display:"flex",flexDirection:"column"}},
+    e("nav",{className:"nav"},e("div",{className:"nav-brand"},"⏱ 勤怠管理システム")),
+    e("div",{style:{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:24}},
+      e("div",{style:{width:400,maxWidth:"100%"}},
+        e("div",{className:"card"},
+          e("h2",{style:{fontSize:18,fontWeight:700,color:"#1e3a5f",marginBottom:4,textAlign:"center"}},"ログイン"),
+          e("p",{style:{fontSize:12,color:"#94a3b8",marginBottom:20,textAlign:"center"}},"ログインIDとパスワードを入力してください"),
+          e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},"ログインID"),
+          e("input",{type:"email",value:loginId,onChange:ev=>{setLoginId(ev.target.value);setErr(null);},onKeyDown:ev=>{if(ev.key==="Enter")doLogin();},placeholder:"example@tribe.jp",autoComplete:"username",className:"input-field",style:{marginBottom:14}}),
+          e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},"パスワード"),
+          e("input",{type:showPw?"text":"password",value:pw,onChange:ev=>{setPw(ev.target.value);setErr(null);},onKeyDown:ev=>{if(ev.key==="Enter")doLogin();},autoComplete:"current-password",className:"input-field",style:{marginBottom:8}}),
+          e("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#64748b",marginBottom:12,cursor:"pointer"}},
+            e("input",{type:"checkbox",checked:showPw,onChange:ev=>setShowPw(ev.target.checked)}),"パスワードを表示"
+          ),
+          err&&e("p",{style:{color:"#dc2626",fontSize:12,fontWeight:700,marginBottom:12,textAlign:"center"}},err),
+          e("button",{className:"btn btn-primary",style:{width:"100%",padding:"12px"},onClick:doLogin,disabled:busy},busy?"確認中…":"ログイン"),
+          e("p",{style:{fontSize:11,color:"#94a3b8",marginTop:14,textAlign:"center",lineHeight:1.6}},"パスワードを忘れた場合は管理者（オーナー）にリセットを依頼してください")
+        )
+      )
+    )
+  );
+}
+
+// ===== MONTHLY TABLE =====
+function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
+  const {days,totalWork,totalOvertime,totalPay,workDays}=summary;
+  const isMonthly=summary.isMonthly;
+  // 金額は管理者・オーナーのみ（一般スタッフは不可）
+  const canSeePay=currentUser.role==="admin"||currentUser.role==="superadmin";
+  const showPay=canSeePay&&!isMonthly;
+  // 移動列：建設部門スタッフ、またはその月に移動時間の記録が1件でもあれば表示
+  const targetEmp=summary.emp||currentUser;
+  const showTravel=needTravelCol(targetEmp,days);
+
+  return e("div",null,
+    isMgrClosed&&e("div",{style:{background:"#d1fae5",borderRadius:10,padding:"12px 16px",marginBottom:16}},
+      e("span",{style:{fontSize:14,fontWeight:700,color:"#065f46"}},"🔒 "+selectedMonth+"分は管理者により締め済みです"),
+      e("div",{style:{fontSize:11,color:"#059669",marginTop:2}},"入力・訂正はできません。変更が必要な場合は管理者にご連絡ください。")
+    ),
+    e("div",{style:{overflowX:"auto"}},
+      e("table",{className:"table",style:{fontSize:13}},
+        e("thead",null,e("tr",null,[
+          e("th",null,"日付"),e("th",null,"店舗"),e("th",null,"出勤"),e("th",null,"退勤"),e("th",null,"休憩"),
+          showTravel&&e("th",null,"移動"),
+          e("th",null,"実働"),e("th",null,"残業"),e("th",null,"深夜"),e("th",null,"状態"),
+          showPay&&e("th",null,"日給")
+        ])),
+        e("tbody",null,
+          days.length===0&&e("tr",null,e("td",{colSpan:showPay?10+(showTravel?1:0):9+(showTravel?1:0),style:{textAlign:"center",color:"#94a3b8",padding:"24px"}},"データなし")),
+          ...days.map((r,i)=>e("tr",{key:i,style:{background:r.status==="rejected"?"#fff1f2":undefined}},
+            e("td",{style:{fontWeight:600}},r.date),
+            e("td",{style:{fontSize:11,color:"#475569"}},r.store||"—"),
+            e("td",null,r.clockIn||"—"),e("td",null,r.clockOut||"—"),
+            e("td",{style:{fontSize:12}},rangeText(r.breaks,r.breakMinutes?r.breakMinutes+"分":"—")),
+            showTravel&&e("td",{style:{fontSize:12,color:"#0369a1"}},rangeText(r.travelTimes)),
+            e("td",null,mHHMM(r.workMinutes)),
+            e("td",{style:{color:r.overtimeMinutes>0?"#d97706":"#94a3b8"}},mHHMM(r.overtimeMinutes)),
+            e("td",{style:{color:r.lateNightMinutes>0?"#7c3aed":"#94a3b8"}},mHHMM(r.lateNightMinutes)),
+            e("td",null,e("span",{className:`status-badge ${S_CLASS[r.status||"draft"]}`},S_LABEL[r.status||"draft"])),
+            showPay&&e("td",{style:{fontWeight:700,color:"#059669"}},"¥"+(r.pay||0).toLocaleString())
+          ))
+        ),
+        e("tfoot",null,e("tr",{style:{background:"#f8fafc",fontWeight:700}},
+          e("td",{colSpan:5,style:{padding:"12px 16px",color:"#1e3a5f"}},"承認済合計（"+(workDays||0)+"日）"),
+          showTravel&&e("td"),
+          e("td",{style:{padding:"12px 16px"}},mHHMM(totalWork)),
+          e("td",{style:{padding:"12px 16px",color:"#d97706"}},mHHMM(totalOvertime)),
+          e("td",{style:{padding:"12px 16px",color:"#7c3aed"}},mHHMM(summary.totalLateNight||0)),
+          e("td"),
+          showPay&&e("td",{style:{padding:"12px 16px",color:"#059669",fontSize:15}},"¥"+totalPay.toLocaleString())
+        ))
+      )
+    ),
+    // 月給制スタッフの給与表示（管理者・オーナーのみ）
+    isMonthly&&canSeePay&&e("div",{style:{marginTop:12,background:"#ecfdf5",border:"2px solid #059669",borderRadius:10,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}},
+      e("span",{style:{fontSize:13,fontWeight:700,color:"#065f46"}},"月給（"+(workDays>0?"今月勤務あり":"今月勤務なし")+"）"),
+      e("span",{style:{fontSize:18,fontWeight:700,color:"#059669"}},"¥"+totalPay.toLocaleString())
+    )
+  );
+}
+
+// ===== PRINT SUMMARY =====
+function PrintSummary({summary,selectedMonth,isAdmin}){
+  const {emp,days,totalWork,totalOvertime,totalPay,totalLateNight,workDays}=summary;
+  if(!emp)return null;
+
+  const [y,m]=selectedMonth.split("-").map(Number);
+  const lastDay=new Date(y,m,0).getDate();
+  const allDates=Array.from({length:lastDay},(_,i)=>`${selectedMonth}-${String(i+1).padStart(2,"0")}`);
+  const recMap=Object.fromEntries(days.map(r=>[r.date,r]));
+  const showTravel=needTravelCol(emp,days);
+  // 月給制は日給が意味を持たないため列を出さない（画面の月次集計と同じ扱い）
+  const isMonthly=summary.isMonthly||emp.payType==="monthly";
+  const showPay=isAdmin&&!isMonthly;
+  const wageLabel=isAdmin
+    ?(emp.payType==="monthly"?" ／ 月給: ¥"+(emp.monthlyWage||0).toLocaleString():" ／ 時給: ¥"+(emp.hourlyWage||0).toLocaleString())
+    :"";
+  const DOW=["日","月","火","水","木","金","土"];
+
+  // 列幅（重み）→ 1ページに収まるよう固定幅で割り当てる
+  const cols=[
+    {k:"date",label:"日付",w:8,cls:"c-nowrap"},
+    {k:"store",label:"店舗",w:13,cls:"c-wrap"},
+    {k:"in",label:"出勤",w:5.5,cls:"c-nowrap"},
+    {k:"out",label:"退勤",w:5.5,cls:"c-nowrap"},
+    {k:"brk",label:"休憩",w:13,cls:"c-wrap"},
+    ...(showTravel?[{k:"trv",label:"移動",w:11,cls:"c-wrap"}]:[]),
+    {k:"note",label:"備考",w:12,cls:"c-wrap"},
+    {k:"work",label:"実働",w:6,cls:"c-nowrap"},
+    {k:"ot",label:"残業",w:6,cls:"c-nowrap"},
+    {k:"ln",label:"深夜",w:6,cls:"c-nowrap"},
+    {k:"st",label:"状態",w:7,cls:"c-nowrap"},
+    ...(showPay?[{k:"pay",label:"日給(円)",w:8,cls:"c-nowrap c-right"}]:[])
+  ];
+  const totalW=cols.reduce((s,c)=>s+c.w,0);
+
+  return e("div",{className:"print-only",style:{display:"none",padding:0}},
+    e("h2",{style:{fontSize:14,marginBottom:4}},"勤怠集計表"+(isAdmin?" （給与含む）":"")),
+    e("p",{style:{fontSize:11,marginBottom:4}},
+      "氏名: "+emp.name+" ／ 部署: "+emp.department+wageLabel+
+      " ／ 対象月: "+selectedMonth
+    ),
+    e("p",{style:{fontSize:10,marginBottom:8,color:"#666"}},
+      "※ 承認済みのデータのみ集計"+
+      (isMonthly&&isAdmin?"　／　月給制のため支給額は月額固定（当月支給額: ¥"+(totalPay||0).toLocaleString()+"）":"")),
+    e("table",{className:"print-table"},
+      e("colgroup",null,...cols.map(c=>e("col",{key:c.k,style:{width:(c.w/totalW*100).toFixed(2)+"%"}}))),
+      e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k},c.label)))),
+      e("tbody",null,...allDates.map((date,i)=>{
+        const r=recMap[date];
+        const dayNum=i+1;
+        const dowIdx=new Date(y,m-1,dayNum).getDay();
+        const dateLabel=`${m}/${dayNum}(${DOW[dowIdx]})`;
+        const breakStr=r?rangeText(r.breaks,r.breakMinutes?r.breakMinutes+"分":"—"):"—";
+        const travelStr=r?rangeText(r.travelTimes):"—";
+        const isWeekend=dowIdx===0||dowIdx===6;
+        return e("tr",{key:i,className:isWeekend?"row-weekend":""},
+          e("td",{className:"c-nowrap"},dateLabel),
+          e("td",{className:"c-wrap"},r?.store||"—"),
+          e("td",{className:"c-nowrap"},r?.clockIn||"—"),
+          e("td",{className:"c-nowrap"},r?.clockOut||"—"),
+          e("td",{className:"c-wrap"},breakStr),
+          ...(showTravel?[e("td",{key:"tv",className:"c-wrap"},travelStr)]:[]),
+          e("td",{className:"c-wrap"},r?.note||"—"),
+          e("td",{className:"c-nowrap"},r?mHHMM(r.workMinutes):"—"),
+          e("td",{className:"c-nowrap"},r?mHHMM(r.overtimeMinutes):"—"),
+          e("td",{className:"c-nowrap"},r?mHHMM(r.lateNightMinutes):"—"),
+          e("td",{className:"c-nowrap"},r?S_LABEL_S[r.status||"draft"]:"—"),
+          ...(showPay?[e("td",{key:"pay",className:"c-nowrap c-right"},r?.status==="approved"?"¥"+(r.pay||0).toLocaleString():"—")]:[])
+        );
+      })),
+      e("tfoot",null,
+        e("tr",{style:{fontWeight:"bold",background:"#e8e8e8"}},
+          e("td",{colSpan:6+(showTravel?1:0),className:"c-nowrap"},"承認済合計（"+workDays+"日）"),
+          e("td",{className:"c-nowrap"},mHHMM(totalWork)),
+          e("td",{className:"c-nowrap"},mHHMM(totalOvertime)),
+          e("td",{className:"c-nowrap"},mHHMM(totalLateNight||0)),
+          e("td"),
+          ...(showPay?[e("td",{key:"total",className:"c-nowrap c-right"},"¥"+totalPay.toLocaleString())]:[])
+        )
+      )
+    )
+  );
+}
+
+// ===== APPROVAL TAB =====
+function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord,saveRecords,selectedMonth,showToast}){
+  const managedStores=currentUser.managedStores||[currentUser.store];
+  const [approvalMonth,setApprovalMonth]=useState(selectedMonth);
+  const [selEmpId,setSelEmpId]=useState(null);
+
+  // IDで重複排除（employeesとadminsに同一IDが存在する場合に備える）
+  const allStaffMap=new Map();
+  [...employees,...(admins||[])].forEach(emp=>allStaffMap.set(emp.id,emp));
+  // 承認対象の判定
+  // ・一般スタッフ：担当店舗にいれば承認可
+  // ・管理者同士：同じ店舗の管理者は互いに承認可（自分自身は不可）
+  // ・オーナー：全員＋自分自身も承認可（上位者が存在しないため）
+  // ・オーナーの勤怠：オーナーのみ承認可
+  const targetStaff=[...allStaffMap.values()].filter(emp=>{
+    const isSelf=emp.id===currentUser.id;
+    if(isSelf)return currentUser.role==="superadmin";
+    if(emp.role==="superadmin")return currentUser.role==="superadmin";
+    return managedStores.includes(emp.store);
+  });
+
+  // 選択中スタッフのその月の全日付レコード
+  const selEmp=targetStaff.find(x=>x.id===selEmpId);
+  const getDaysInMonth=month=>{
+    const [y,m]=month.split("-").map(Number);
+    const days=[];
+    const last=new Date(y,m,0).getDate();
+    for(let d=1;d<=last;d++)days.push(`${month}-${String(d).padStart(2,"0")}`);
+    return days;
+  };
+  const allDays=selEmp?getDaysInMonth(approvalMonth):[];
+  const selRecs=selEmp?allDays.map(date=>{
+    const r=records[selEmp.id]?.[date];
+    return r?{...r,empName:selEmp.name,empStore:selEmp.store}:{empId:selEmp.id,date,empName:selEmp.name,empStore:selEmp.store,status:null,clockIn:"",clockOut:""};
+  }):[];
+  // 移動列：建設部門スタッフ、またはその月に移動時間の記録があれば表示
+  const showTravel=needTravelCol(selEmp,selRecs);
+
+  // 全スタッフの承認待ち件数
+  const allPending=[];
+  targetStaff.forEach(emp=>{
+    Object.values(records[emp.id]||{}).forEach(r=>{
+      if(r.date?.startsWith(approvalMonth)&&r.status==="submitted")allPending.push({...r,empName:emp.name});
+    });
+  });
+
+  const mgrClosed=targetStaff.length>0&&targetStaff.every(emp=>isAdminClosed(emp.id,approvalMonth));
+
+  const approve=(empId,date)=>{
+    if(mgrClosed){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
+    const rec=records[empId]?.[date];if(!rec)return;
+    saveRecord({...rec,status:"approved"});showToast("承認しました ✓");
+  };
+  const reject=(empId,date)=>{
+    if(mgrClosed){showToast("月締め済みです。月締めを解除してから差戻ししてください。","warning");return;}
+    const existing=records[empId]?.[date];
+    const emp=[...employees,...(admins||[])].find(x=>x.id===empId);
+    const rec=existing||{empId,date,clockIn:"",clockOut:"",breaks:[],note:"",status:"draft",hourlyWage:emp?.hourlyWage??1000,store:emp?.store||""};
+    saveRecord({...rec,status:"rejected"});
+    showToast("差し戻しました","warning");
+  };
+  const approveAll=()=>{
+    if(mgrClosed){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
+    if(!selEmp){showToast("スタッフを選択してください","warning");return;}
+    const targets=selRecs.filter(r=>r.status==="submitted");
+    if(targets.length===0){showToast("承認待ちのデータがありません","warning");return;}
+    saveRecords(targets.map(r=>({...r,status:"approved"})));
+    showToast(`${selEmp.name}の${targets.length}件を承認しました`);
+  };
+  const [showCloseConfirm,setShowCloseConfirm]=useState(false);
+  const doMgrClose=()=>{
+    if(allPending.length>0){
+      showToast(`承認待ちが${allPending.length}件あります。すべて承認または差戻ししてから月締めしてください。`,"warning");
+      setShowCloseConfirm(false);
+      return;
+    }
+    // 差戻し中があれば締め不可
+    const rejectedCount=targetStaff.reduce((n,emp)=>n+Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth)&&r.status==="rejected").length,0);
+    if(rejectedCount>0){
+      showToast(`差戻し中が${rejectedCount}件あります。修正・承認後に月締めしてください。`,"warning");
+      setShowCloseConfirm(false);
+      return;
+    }
+    targetStaff.forEach(emp=>setAdminClosed(emp.id,approvalMonth));
+    showToast(approvalMonth+"分を月締めしました");
+    setShowCloseConfirm(false);
+  };
+  // 月締め解除：全スタッフのフラグを外してスタッフが修正できる状態に
+  const doMgrUnclose=()=>{
+    targetStaff.forEach(emp=>{
+      try{localStorage.removeItem(getAdminCloseKey(emp.id,approvalMonth));}catch{}
+    });
+    showToast("全員の月締めを解除しました。スタッフは修正できます。","warning");
+  };
+
+  return e("div",null,
+    // 管理者月締めバナー
+    mgrClosed
+      ?e("div",{style:{background:"#d1fae5",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}},
+        e("span",{style:{fontSize:14,fontWeight:700,color:"#065f46"}},"🔒 "+approvalMonth+"分 月締め済み"),
+        e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 12px"},onClick:doMgrUnclose},"月締めを解除")
+      )
+      :showCloseConfirm
+        ?e("div",{style:{background:"#fff3cd",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+          e("span",{style:{fontSize:13,fontWeight:700,color:"#1e3a5f"}},approvalMonth+"分を月締めしますか？スタッフは入力・訂正できなくなります。"),
+          e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},onClick:doMgrClose},"はい・月締めする"),
+          e("button",{className:"btn btn-outline",style:{fontSize:12,padding:"6px 16px"},onClick:()=>setShowCloseConfirm(false)},"キャンセル")
+        )
+        :e("div",{style:{background:"#f8faff",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}},
+          e("span",{style:{fontSize:12,color:"#64748b"}},"月末に全員の承認が完了したら月締めしてください"),
+          e("button",{className:"btn btn-primary",style:{fontSize:13},onClick:()=>setShowCloseConfirm(true)},"🔒 "+approvalMonth+"分を月締め")
+        ),
+    // ヘッダー
+    e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}},
+      e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+        e("input",{type:"month",value:approvalMonth,onChange:ev=>{setApprovalMonth(ev.target.value);setSelEmpId(null);},className:"input-field",style:{width:"auto",fontSize:14,fontWeight:700,padding:"6px 12px",color:"#1e3a5f",border:"2px solid #1e3a5f",borderRadius:10}}),
+        e("span",{style:{fontSize:13,color:"#64748b"}},"担当店舗: "+managedStores.join("・")),
+        e("span",{style:{fontSize:12,background:"#fff3cd",color:"#856404",padding:"2px 10px",borderRadius:20,fontWeight:700}},"承認待ち: "+allPending.length+"件")
+      )
+    ),
+      // スタッフ選択
+    e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}},
+      targetStaff.map(emp=>{
+        const empMonthRecs=Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth));
+        const pendingCount=empMonthRecs.filter(r=>r.status==="submitted").length;
+        const rejectedCount=empMonthRecs.filter(r=>r.status==="rejected").length;
+        const isEmpClosed=isAdminClosed(emp.id,approvalMonth);
+        const hasRejected=empMonthRecs.some(r=>r.status==="rejected");
+        return e("button",{key:emp.id,
+          onClick:()=>setSelEmpId(selEmpId===emp.id?null:emp.id),
+          style:{padding:"8px 14px",borderRadius:10,border:`2px solid ${selEmpId===emp.id?"#1e3a5f":"#e2e8f0"}`,background:selEmpId===emp.id?"#1e3a5f":"white",color:selEmpId===emp.id?"white":"#1e3a5f",cursor:"pointer",fontFamily:"inherit",fontWeight:600,fontSize:13,display:"flex",alignItems:"center",gap:6}},
+          emp.name,
+          isEmpClosed&&!hasRejected&&e("span",{style:{fontSize:10,background:"#065f46",color:"white",padding:"1px 5px",borderRadius:8}},"月締済"),
+          pendingCount>0&&e("span",{style:{fontSize:10,background:"#fff3cd",color:"#856404",padding:"1px 5px",borderRadius:8}},pendingCount+"件"),
+          rejectedCount>0&&e("span",{style:{fontSize:10,background:"#fee2e2",color:"#991b1b",padding:"1px 5px",borderRadius:8}},"差戻"+rejectedCount)
+        );
+      })
+    ),
+    // 選択スタッフの日別一覧
+    selEmp&&e("div",null,
+      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
+        e("div",{style:{fontWeight:700,fontSize:14,color:"#1e3a5f"}},selEmp.name+" の"+approvalMonth+"の勤怠"),
+        selRecs.filter(r=>r.status==="submitted").length>0&&e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},onClick:approveAll},"✓ 承認待ちを一括承認")
+      ),
+      e("table",{className:"table",style:{fontSize:13}},
+        e("thead",null,e("tr",null,["日付","店舗","出勤","退勤","休憩",...(showTravel?["移動"]:[]),"備考","実働","状態","操作"].map(h=>e("th",{key:h},h)))),
+        e("tbody",null,...selRecs.map((r,i)=>{
+          const calc=calcRecord({...r,hourlyWage:r.hourlyWage!=null?r.hourlyWage:(selEmp.hourlyWage??1000)});
+          const hasData=r.clockIn||r.clockOut;
+          const breakStr=rangeText(r.breaks);
+          const travelStr=rangeText(r.travelTimes);
+          return e("tr",{key:i,style:{background:r.status==="rejected"?"#fff1f2":!hasData&&r.status!=="rejected"?"#fafafa":undefined}},
+            e("td",{style:{fontWeight:600}},r.date),
+            e("td",{style:{fontSize:11,color:"#475569"}},hasData?(r.store||"—"):"—"),
+            e("td",null,r.clockIn||"—"),
+            e("td",null,r.clockOut||"—"),
+            e("td",{style:{fontSize:11,color:"#64748b"}},breakStr),
+            showTravel&&e("td",{style:{fontSize:11,color:"#0369a1"}},travelStr),
+            e("td",{style:{fontSize:11,color:"#64748b",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.note||"—"),
+            e("td",null,hasData?mHHMM(calc.workMinutes):"—"),
+            e("td",null,r.status
+              ?e("span",{className:`status-badge ${S_CLASS[r.status]}`},S_LABEL[r.status])
+              :e("span",{style:{fontSize:11,color:"#94a3b8"}},"データなし")
+            ),
+            e("td",null,
+              r.status==="approved"
+                ?e("div",{style:{display:"flex",gap:6}},
+                  e("span",{style:{color:"#059669",fontSize:12}},"✓ 承認済"),
+                  !mgrClosed&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>reject(r.empId,r.date)},"差戻")
+                )
+                :r.status==="rejected"
+                  ?e("div",{style:{display:"flex",gap:6}},
+                    e("button",{className:"btn btn-warning",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{
+                      const rec=records[r.empId]?.[r.date];
+                      if(!rec||(!rec.clockIn&&!rec.clockOut)){
+                        // データなしで差戻したケース→レコードを削除してデータなしに戻す（GAS側も削除）
+                        gasDeleteRecord(r.empId,r.date);
+                        setRecords(prev=>{
+                          const empRecs={...(prev[r.empId]||{})};
+                          delete empRecs[r.date];
+                          return {...prev,[r.empId]:empRecs};
+                        });
+                      } else {
+                        // データありで差戻したケース→承認待ちに戻す
+                        saveRecord({...rec,status:"submitted"});
+                      }
+                      showToast("差戻を取り消しました");
+                    }},"差戻取消")
+                  )
+                  :e("div",{style:{display:"flex",gap:6}},
+                    hasData&&e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>approve(r.empId,r.date)},"承認"),
+                    !mgrClosed&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>reject(r.empId,r.date)},"差戻")
+                  )
+            )
+          );
+        }))
+      )
+    ),
+    !selEmp&&e("p",{style:{textAlign:"center",color:"#94a3b8",padding:"32px"}},"上のスタッフ名を選択すると日別一覧が表示されます")
+  );
+}
+
+// ===== RESET BUTTON =====
+function ResetButton({date,onConfirm}){
+  const [confirming,setConfirming]=useState(false);
+  if(confirming)return e("div",{style:{display:"flex",alignItems:"center",gap:8,background:"#fee2e2",borderRadius:8,padding:"8px 12px"}},
+    e("span",{style:{fontSize:12,color:"#991b1b",fontWeight:600}},date+"のデータをリセットしますか？"),
+    e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 12px"},onClick:()=>{onConfirm();setConfirming(false);}},"はい"),
+    e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 12px"},onClick:()=>setConfirming(false)},"いいえ")
+  );
+  return e("button",{className:"btn btn-danger",style:{fontSize:13,padding:"7px 16px"},onClick:()=>setConfirming(true)},"リセット");
+}
+
+// ===== EMPLOYEE VIEW (共通：一般・管理者両方) =====
+function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}){
+  const isAdmin=currentUser.role==="admin"||currentUser.role==="superadmin";
+  const canSeePay=currentUser.role==="admin"||currentUser.role==="superadmin";
+  const isBi=currentUser.bilingual===true||BILINGUAL_IDS.includes(currentUser.id);
+  const [editDate,setEditDate]=useState(todayStr);
+  const [form,setForm]=useState({clockIn:"",clockOut:"",breaks:[{start:"",end:""}],travelTimes:[{start:"",end:""}],note:""});
+  const [activeTab,setActiveTab]=useState("today");
+  const [showPinChange,setShowPinChange]=useState(currentUser.passHash==null);
+  const [showHelp,setShowHelp]=useState(false);
+  const [selectedStore,setSelectedStore]=useState(currentUser.store||"");
+  const allStores=ALL_STORES; // 部署に関係なく全店舗から選択可能（他店舗ヘルプ勤務に対応）
+  // 建設部門スタッフ、またはその日の対象店舗がモノレールなら移動時間を入力可能
+  const isConstruction=isMonorailWork(currentUser.id,currentUser.store)||selectedStore==="モノレール";
+  // 承認済みの日のみ対象店舗を変更不可（承認待ち・差戻し中は修正できる）
+  const storeLocked=(records[currentUser.id]?.[editDate]||{}).status==="approved";
+  // 同日に別店舗の出勤がある場合の入力欄
+  const [showSubStore,setShowSubStore]=useState(false);
+  const [subFrom,setSubFrom]=useState("");
+  const [subTo,setSubTo]=useState("");
+  const [subStore,setSubStore]=useState(currentUser.store||ALL_STORES[0]);
+
+  useEffect(()=>{
+    const r=getRecord(currentUser.id,editDate);
+    const eb=r.breaks&&r.breaks.length?r.breaks:[{start:"",end:""}];
+    const et=r.travelTimes&&r.travelTimes.length?r.travelTimes:[{start:"",end:""}];
+    setForm({clockIn:r.clockIn||"",clockOut:r.clockOut||"",breaks:eb,travelTimes:et,note:r.note||""});
+    // その日に記録された店舗を復元（未記録の日は自分の所属店舗）
+    setSelectedStore(r.store||currentUser.store||"");
+    // 別店舗入力欄は日付を変えたら閉じる
+    // 別店舗の記録が備考にある日は、チェックを入れた状態で開く
+    const hasSub=(r.note||"").split(" / ").some(s=>/^\d{1,2}:\d{2}-\d{1,2}:\d{2}\s+\S/.test(s.trim()));
+    setShowSubStore(hasSub);setSubFrom("");setSubTo("");
+  },[editDate,records]);
+
+  const savePassToList=(hash)=>{
+    const upd={...currentUser,passHash:hash};
+    const inAdmins=(admins||[]).some(x=>x.id===currentUser.id);
+    if(inAdmins)setAdmins(prev=>prev.map(x=>x.id===currentUser.id?upd:x));
+    else setEmployees(prev=>prev.map(x=>x.id===currentUser.id?upd:x));
+    setCurrentUser(upd);showToast("パスワードを変更しました");
+  };
+
+  const rec=getRecord(currentUser.id,editDate);
+  const monthOfEdit=editDate.substring(0,7);
+  const monthClosed=isAdminClosed(currentUser.id,monthOfEdit);
+  const canEdit=rec.status!=="approved"&&!monthClosed;
+  // 入力内容が保存済みの記録と異なるか（＝未保存の変更があるか）
+  const hasUnsaved=(()=>{
+    if(!canEdit)return false;
+    const vb=a=>(a||[]).filter(x=>x.start&&x.end);
+    const same=(rec.clockIn||"")===(form.clockIn||"")&&
+      (rec.clockOut||"")===(form.clockOut||"")&&
+      (rec.note||"")===(form.note||"")&&
+      (rec.store||currentUser.store||"")===selectedStore&&
+      JSON.stringify(vb(rec.breaks))===JSON.stringify(vb(form.breaks))&&
+      JSON.stringify(vb(rec.travelTimes))===JSON.stringify(vb(form.travelTimes));
+    return !same;
+  })();
+  // 未保存の入力があるまま日付を移動しようとしたら確認する
+  const changeDate=(next)=>{
+    if(!next||next===editDate)return;
+    if(hasUnsaved&&!window.confirm(
+      "入力中の内容が提出されていません。日付を変更すると入力内容が消えます。よろしいですか？"))return;
+    setEditDate(next);
+  };
+  const summary=getMonthlySummary(currentUser.id);
+  // calcはeditDateと選択中店舗を使って安全に計算（モノレール選択時は移動控除もプレビューに反映）
+  const calc=editDate?calcRecord({...rec,...form,date:editDate,store:selectedStore,hourlyWage:currentUser.hourlyWage}):{workMinutes:0,overtimeMinutes:0,lateNightMinutes:0,pay:0};
+
+  const doSave=(submit=true,isCorrect=false)=>{
+    if(monthClosed){showToast("月締め済みのため入力できません","warning");return;}
+    if(!form.clockIn||!form.clockOut){showToast("出勤・退勤時刻を入力してください","warning");return;}
+    // 休憩・移動が勤務時間外チェック（日またぎ対応：isRangeWithinShiftで統一）
+    const sameTime=arr=>(arr||[]).filter(b=>b.start&&b.end&&b.start===b.end);
+    if(sameTime(form.breaks).length>0){showToast("休憩の開始と終了が同じ時刻です。修正してください。","warning");return;}
+    if(isConstruction&&sameTime(form.travelTimes).length>0){showToast("移動時間の開始と終了が同じ時刻です。修正してください。","warning");return;}
+    const outOfRange=arr=>(arr||[]).filter(b=>b.start&&b.end&&!isRangeWithinShift(form.clockIn,form.clockOut,b.start,b.end));
+    if(outOfRange(form.breaks).length>0){showToast("勤務時間外の休憩があります。修正してください。","warning");return;}
+    if(isConstruction&&outOfRange(form.travelTimes).length>0){showToast("勤務時間外の移動時間があります。修正してください。","warning");return;}
+    if(rec.status==="approved"){showToast("承認済みのため訂正できません","warning");return;}
+    if(isCorrect&&rec.status==="submitted"){
+      const vb=a=>(a||[]).filter(x=>x.start&&x.end);
+      const same=rec.clockIn===form.clockIn&&rec.clockOut===form.clockOut&&rec.note===form.note&&
+        (rec.store||"")===selectedStore&&
+        JSON.stringify(vb(rec.breaks))===JSON.stringify(vb(form.breaks))&&
+        JSON.stringify(vb(rec.travelTimes))===JSON.stringify(vb(form.travelTimes));
+      if(same){showToast("内容に変更がありません","warning");return;}
+    }
+    const r={...rec,...form,empId:currentUser.id,date:editDate,hourlyWage:currentUser.hourlyWage,
+      // 承認済みの日は保存時も元の店舗を維持する
+      store:storeLocked?(rec.store||selectedStore):selectedStore,status:"submitted"};
+    submitRecord(r);
+  };
+
+  // 入力時刻が出勤〜退勤の範囲内か判定（日またぎ対応）
+  const isWithinShiftFor=(ci,co,timeStr)=>{
+    if(!ci||!co||!timeStr)return true;
+    const inMin=parseInt(ci.slice(0,2))*60+parseInt(ci.slice(3));
+    let outMin=parseInt(co.slice(0,2))*60+parseInt(co.slice(3));
+    let tMin=parseInt(timeStr.slice(0,2))*60+parseInt(timeStr.slice(3));
+    if(outMin<=inMin)outMin+=1440;
+    let tAdjusted=tMin;
+    if(tMin<inMin)tAdjusted=tMin+1440;
+    return tAdjusted>=inMin&&tAdjusted<=outMin;
+  };
+  const isWithinShift=(timeStr)=>isWithinShiftFor(form.clockIn,form.clockOut,timeStr);
+  // 休憩・移動の「区間」が出勤〜退勤の範囲内か判定（日またぎ対応・分ベース）
+  // ※calcRecordのtoRangesと同じ正規化を行い、判定と計算のズレを防ぐ
+  const isRangeWithinShift=(ci,co,start,end)=>{
+    if(!ci||!co||!start||!end)return true;
+    const inMin=parseInt(ci.slice(0,2))*60+parseInt(ci.slice(3));
+    let outMin=parseInt(co.slice(0,2))*60+parseInt(co.slice(3));
+    if(outMin<=inMin)outMin+=1440;
+    let s=parseInt(start.slice(0,2))*60+parseInt(start.slice(3));
+    let en=parseInt(end.slice(0,2))*60+parseInt(end.slice(3));
+    if(s===en)return true;             // 同時刻＝0分として無視されるため範囲判定は通す
+    if(s<inMin)s+=1440;
+    if(en<inMin)en+=1440;
+    if(en<=s)en+=1440;
+    return s>=inMin&&en<=outMin;
+  };
+  // 出退勤変更時：既存の休憩・移動が範囲外ならエラー表示
+  const checkExistingAfterClock=(ci,co)=>{
+    if(!ci||!co)return;
+    const bad=arr=>(arr||[]).filter(x=>{
+      if(x.start&&x.end)return !isRangeWithinShift(ci,co,x.start,x.end);
+      if(x.start)return !isWithinShiftFor(ci,co,x.start);
+      if(x.end)return !isWithinShiftFor(ci,co,x.end);
+      return false;
+    });
+    const outBreaks=bad(form.breaks);
+    const outTravels=isConstruction?bad(form.travelTimes):[];
+    if(outBreaks.length>0&&outTravels.length>0)showToast("休憩・移動時間が出勤〜退勤の範囲外です。修正してください","warning");
+    else if(outBreaks.length>0)showToast("休憩時間が出勤〜退勤の範囲外です。修正してください","warning");
+    else if(outTravels.length>0)showToast("移動時間が出勤〜退勤の範囲外です。修正してください","warning");
+  };
+  const doReset=()=>{
+    // 提出済み等でGASに保存済みのレコードは、スプレッドシート側も削除
+    const existing=records[currentUser.id]?.[editDate];
+    if(existing&&existing.status&&existing.status!=="draft")gasDeleteRecord(currentUser.id,editDate);
+    setRecords(prev=>{
+      const empRecs={...(prev[currentUser.id]||{})};
+      delete empRecs[editDate];
+      return {...prev,[currentUser.id]:empRecs};
+    });
+    setForm({clockIn:"",clockOut:"",breaks:[{start:"",end:""}],travelTimes:[{start:"",end:""}],note:""});
+    setSelectedStore(currentUser.store||"");
+    showToast(editDate+"のデータをリセットしました");
+  };
+  const rejectedDates=Object.values(records[currentUser.id]||{}).filter(r=>r.status==="rejected"&&r.date?.startsWith(selectedMonth)).map(r=>r.date).sort().reverse();
+
+  const tabs=[[("today"),L("📅 日次入力","📅 Daily Input",isBi)],[("monthly"),L("📊 月次一覧","📊 Monthly",isBi)]];
+  if(isAdmin)tabs.push([("approval"),L("✅ 承認管理","✅ Approval",isBi)]);
+
+  return e("div",null,
+    showPinChange&&e(PasswordChangeModal,{currentUser,isForced:currentUser.passHash==null,
+      onCancel:()=>{
+        if(currentUser.passHash==null){
+          setCurrentUser(null);setView("login");
+        } else {
+          setShowPinChange(false);
+        }
+      },
+      onDone:hash=>{savePassToList(hash);setShowPinChange(false);}
+    }),
+    showHelp&&e(HelpModal,{isAdmin,isOwner:currentUser.role==="superadmin",onClose:()=>setShowHelp(false)}),
+    // ヘッダー
+    e("div",{className:"emp-header no-print",style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}},
+      e("div",{className:"emp-header-left",style:{display:"flex",alignItems:"center",gap:12}},
+        e("button",{onClick:onBack,className:"no-print",style:{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",border:"1.5px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:13,fontWeight:600,color:"#64748b",fontFamily:"inherit"}},"← "+L("ログアウト","Logout",isBi)),
+        e("h2",{style:{fontSize:20,fontWeight:700,color:"#1e3a5f"}},L("マイ勤怠","My Attendance",isBi)),
+        e("div",{style:{fontWeight:700,fontSize:20,color:"#1e3a5f"}},currentUser.name)
+      ),
+      e("button",{className:"no-print",onClick:()=>setShowHelp(true),style:{padding:"7px 14px",border:"1.5px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:13,fontWeight:600,color:"#64748b",fontFamily:"inherit"}},"❓ "+L("使い方","Help",isBi)),
+      e("button",{className:"no-print",onClick:()=>setShowPinChange(true),style:{padding:"7px 14px",border:"1.5px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:13,fontWeight:600,color:"#64748b",fontFamily:"inherit"}},"🔐 "+L("パスワード変更","Change Password",isBi))
+    ),
+    // 月選択・給与（金額は管理者・オーナーのみ表示）
+    e("div",{style:{display:"flex",alignItems:"center",gap:16,marginBottom:16},className:"no-print"},
+      e("input",{type:"month",value:selectedMonth,onChange:ev=>setSelectedMonth(ev.target.value),className:"input-field",style:{width:"auto",fontSize:16,fontWeight:700,padding:"10px 16px",color:"#1e3a5f",border:"2px solid #1e3a5f",borderRadius:12}}),
+      (currentUser.role==="admin"||currentUser.role==="superadmin")&&e("p",{style:{color:"#475569",fontSize:16,fontWeight:700}},
+        currentUser.payType==="monthly"
+          ?L("月給","Monthly",isBi)+" ¥"+(currentUser.monthlyWage||0).toLocaleString()
+          :L("時給","Hourly",isBi)+" ¥"+(currentUser.hourlyWage||0).toLocaleString()+L("/時間","/h",isBi)
+      )
+    ),
+    // 統計（給与は非表示・承認済みのみ集計）
+    e("div",{className:"stat-grid no-print",style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:8}},
+      ...[{label:L("勤務日数","Work Days",isBi),val:summary.workDays+"日"},{label:L("今月勤務時間","Monthly Hours",isBi),val:mHHMM(summary.totalWork)},{label:L("時間外労働","Overtime",isBi),val:mHHMM(summary.totalOvertime)},{label:L("深夜労働","Late Night",isBi),val:mHHMM(summary.totalLateNight)}]
+        .map(s=>e("div",{key:s.label,className:"stat-box"},e("div",{style:{fontSize:18,fontWeight:700,color:"#1e3a5f"}},s.val),e("div",{style:{fontSize:11,color:"#94a3b8",fontWeight:600,marginTop:4}},s.label)))
+    ),
+    e("p",{className:"no-print",style:{fontSize:11,color:"#94a3b8",marginBottom:12}},"※ 承認済みのデータのみ集計"),
+    // 差戻し中の日がある場合のアラート（月締め後は非表示）
+    !monthClosed&&rejectedDates.length>0&&e("div",{style:{background:"#fee2e2",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"},className:"no-print"},
+      e("span",{style:{fontSize:13,fontWeight:700,color:"#991b1b"}},"⚠ 差戻し中の日があります:"),
+      ...rejectedDates.map(date=>e("button",{key:date,onClick:()=>{setActiveTab("today");changeDate(date);},
+        style:{fontSize:12,padding:"4px 12px",borderRadius:20,border:"none",background:"#dc2626",color:"white",cursor:"pointer",fontWeight:700}},date))
+    ),
+    // タブ
+    e("div",{className:"card no-print"},
+      e("div",{style:{display:"flex",borderBottom:"2px solid #f1f5f9",marginBottom:20,gap:4}},
+        ...tabs.map(([k,l])=>e("button",{key:k,className:`tab ${activeTab===k?"active":""}`,onClick:()=>setActiveTab(k)},l))
+      ),
+      // 日次入力タブ
+      activeTab==="today"&&e("div",null,
+        // 対象店舗（承認済みのみ変更不可）
+        e("div",{style:{marginBottom:14}},
+          e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("対象店舗","Store",isBi)),
+          e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+            storeLocked
+              ?e("div",{style:{width:200,padding:"9px 12px",border:"1.5px solid #e2e8f0",borderRadius:8,background:"#f1f5f9",color:"#475569",fontSize:14,fontWeight:600}},selectedStore||"—")
+              :e("select",{value:selectedStore,onChange:ev=>setSelectedStore(ev.target.value),className:"input-field",style:{width:200}},
+                  allStores.filter(s=>!INACTIVE_STORES.includes(s)).map(s=>e("option",{key:s,value:s},s))
+                ),
+            e("span",{className:`status-badge ${S_CLASS[rec.status||"draft"]}`},S_LABEL[rec.status||"draft"]),
+            storeLocked&&e("span",{style:{fontSize:11,color:"#94a3b8",fontWeight:600}},
+              L("🔒 承認済みのため変更できません","🔒 Locked (approved)",isBi))
+          )
+        ),
+        // 対象日
+        e("div",{style:{marginBottom:14}},
+          e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},
+            L("対象日","Date",isBi),
+            hasUnsaved&&e("span",{style:{marginLeft:8,fontSize:11,color:"#d97706",fontWeight:700}},
+              L("● 未提出の入力があります","● Unsaved changes",isBi))
+          ),
+          e("div",{style:{display:"flex",alignItems:"center",gap:8}},
+            e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()-1);changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"−"),
+            e("input",{type:"date",value:editDate,onChange:ev=>changeDate(ev.target.value),className:"input-field",style:{width:160},max:todayStr}),
+            e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()+1);if(formatDate(d)<=todayStr)changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"＋")
+          )
+        ),
+        // 出退勤
+        e("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}},
+          e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("出勤時刻","Clock In",isBi)),e("input",{type:"time",value:form.clockIn,onChange:ev=>{const v=ev.target.value;setForm(f=>({...f,clockIn:v}));checkExistingAfterClock(v,form.clockOut);},className:"input-field",disabled:!canEdit})),
+          e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("退勤時刻","Clock Out",isBi)),e("input",{type:"time",value:form.clockOut,onChange:ev=>{const v=ev.target.value;setForm(f=>({...f,clockOut:v}));checkExistingAfterClock(form.clockIn,v);},className:"input-field",disabled:!canEdit}))
+        ),
+        // 休憩
+        e("div",{style:{marginBottom:14}},
+          e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
+            e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700}},L("休憩時間","Break",isBi)),
+            canEdit&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,breaks:[...f.breaks,{start:"",end:""}]})),style:{fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #1e3a5f",background:"white",color:"#1e3a5f",cursor:"pointer",fontWeight:700}},L("＋ 追加","＋ Add",isBi))
+          ),
+          ...form.breaks.map((b,i)=>e("div",{key:i,style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
+            e("span",{style:{fontSize:11,color:"#94a3b8",width:16,textAlign:"right",flexShrink:0}},i+1),
+            e("input",{type:"time",value:b.start,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast("出勤〜退勤の範囲内で入力してください","warning");return;}setForm(f=>{const bs=[...f.breaks];bs[i]={...bs[i],start:v};return{...f,breaks:bs};});},className:"input-field",disabled:!canEdit,style:{flex:1}}),
+            e("span",{style:{color:"#94a3b8",fontSize:12}},"〜"),
+            e("input",{type:"time",value:b.end,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast("出勤〜退勤の範囲内で入力してください","warning");return;}setForm(f=>{const bs=[...f.breaks];bs[i]={...bs[i],end:v};return{...f,breaks:bs};});},className:"input-field",disabled:!canEdit,style:{flex:1}}),
+            canEdit&&form.breaks.length>1&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,breaks:f.breaks.filter((_,j)=>j!==i)})),style:{fontSize:12,width:24,height:24,borderRadius:"50%",border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:700}},"×")
+          ))
+        ),
+        // 移動時間（建設部門のみ）
+        isConstruction&&e("div",{style:{marginBottom:14}},
+          e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
+            e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700}},"移動時間 / Travel Time"),
+            canEdit&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,travelTimes:[...f.travelTimes,{start:"",end:""}]})),style:{fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #1e3a5f",background:"white",color:"#1e3a5f",cursor:"pointer",fontWeight:700}},L("＋ 追加","＋ Add",isBi))
+          ),
+          ...(form.travelTimes||[{start:"",end:""}]).map((t,i)=>e("div",{key:i,style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
+            e("span",{style:{fontSize:11,color:"#94a3b8",width:16,textAlign:"right",flexShrink:0}},i+1),
+            e("input",{type:"time",value:t.start,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast(L("出勤〜退勤の範囲内で入力してください","Enter within clock in–out range",isBi),"warning");return;}setForm(f=>{const ts=[...f.travelTimes];ts[i]={...ts[i],start:v};return{...f,travelTimes:ts};});},className:"input-field",disabled:!canEdit,style:{flex:1}}),
+            e("span",{style:{color:"#94a3b8",fontSize:12}},"〜"),
+            e("input",{type:"time",value:t.end,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast(L("出勤〜退勤の範囲内で入力してください","Enter within clock in–out range",isBi),"warning");return;}setForm(f=>{const ts=[...f.travelTimes];ts[i]={...ts[i],end:v};return{...f,travelTimes:ts};});},className:"input-field",disabled:!canEdit,style:{flex:1}}),
+            canEdit&&(form.travelTimes||[]).length>1&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,travelTimes:f.travelTimes.filter((_,j)=>j!==i)})),style:{fontSize:12,width:24,height:24,borderRadius:"50%",border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:700}},"×")
+          ))
+        ),
+        // 同日に別店舗の出勤がある場合（チェックすると時間・店舗の入力欄が出る）
+        e("div",{style:{marginBottom:12}},
+          e("label",{style:{display:"flex",alignItems:"center",gap:8,cursor:canEdit?"pointer":"not-allowed",fontSize:13,fontWeight:600,color:canEdit?"#1e3a5f":"#94a3b8"}},
+            e("input",{type:"checkbox",checked:showSubStore,disabled:!canEdit,
+              onChange:ev=>{
+                const on=ev.target.checked;
+                setShowSubStore(on);
+                // チェックを外したら、追加した別店舗の記録だけを備考から取り除く
+                // （手入力した文言は残す）
+                if(!on){
+                  setForm(f=>{
+                    const kept=(f.note||"").split(" / ")
+                      .filter(s=>s.trim()&&!/^\d{1,2}:\d{2}-\d{1,2}:\d{2}\s+\S/.test(s.trim()));
+                    return {...f,note:kept.join(" / ")};
+                  });
+                }
+              },style:{width:16,height:16,cursor:canEdit?"pointer":"not-allowed"}}),
+            L("同日に別店舗の出勤がある","Worked at another store today",isBi)
+          ),
+          showSubStore&&e("div",{style:{marginTop:10,padding:"12px 14px",background:"#f8faff",border:"1.5px solid #dbeafe",borderRadius:10}},
+            e("div",{style:{fontSize:11,color:"#64748b",fontWeight:700,marginBottom:8}},
+              L("別店舗の時間帯を選んで「追加」を押すと、備考欄に記録されます","Select the time and store, then press Add",isBi)),
+            e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}},
+              e("input",{type:"time",value:subFrom,onChange:ev=>setSubFrom(ev.target.value),className:"input-field",style:{width:120},disabled:!canEdit}),
+              e("span",{style:{color:"#94a3b8"}},"〜"),
+              e("input",{type:"time",value:subTo,onChange:ev=>setSubTo(ev.target.value),className:"input-field",style:{width:120},disabled:!canEdit}),
+              e("select",{value:subStore,onChange:ev=>setSubStore(ev.target.value),className:"input-field",style:{width:180},disabled:!canEdit},
+                allStores.filter(s=>!INACTIVE_STORES.includes(s)).map(s=>e("option",{key:s,value:s},s))
+              ),
+              e("button",{type:"button",disabled:!canEdit,className:"btn btn-primary",style:{fontSize:13,padding:"8px 18px"},
+                onClick:()=>{
+                  if(!subFrom||!subTo){showToast("時間を入力してください","warning");return;}
+                  const txt=subFrom.slice(0,5)+"-"+subTo.slice(0,5)+" "+subStore;
+                  setForm(f=>({...f,note:f.note?f.note+" / "+txt:txt}));
+                  setSubFrom("");setSubTo("");
+                }},"＋ "+L("追加","Add",isBi))
+            ),
+            e("div",{style:{marginTop:10,padding:"10px 12px",background:"white",border:"1.5px solid #bfdbfe",borderRadius:8}},
+              e("div",{style:{fontSize:11,fontWeight:700,color:"#1e40af",marginBottom:6}},
+                L("📌 入力のしかた","How to enter",isBi)),
+              e("div",{style:{fontSize:11,color:"#475569",lineHeight:1.8}},
+                L("① 出勤・退勤は、1日の最初の出勤〜最後の退勤を入力","1. Clock in/out = first in and last out of the day",isBi),
+                e("br"),
+                L("② 店舗の移動でできた空き時間は「休憩」に追加","2. Add the gap between stores as a break",isBi),
+                e("br"),
+                L("③ 各店舗でとった休憩も、それぞれ「休憩」に追加","3. Add breaks taken at each store as well",isBi)
+              ),
+              e("div",{style:{fontSize:10.5,color:"#64748b",marginTop:8,paddingTop:8,borderTop:"1px dashed #cbd5e1",lineHeight:1.7}},
+                L("例）カリッジュ 9:00-17:00（休憩12:00-13:00）／ GOLF BAR 21:00-24:00（休憩22:00-22:30）の場合",
+                  "Example: Store A 9:00-17:00 (break 12:00-13:00) / Store B 21:00-24:00 (break 22:00-22:30)",isBi),
+                e("br"),
+                L("　出勤 9:00 ／ 退勤 24:00","　In 9:00 / Out 24:00",isBi),
+                e("br"),
+                L("　休憩 12:00-13:00、17:00-21:00（移動）、22:00-22:30","　Breaks 12:00-13:00, 17:00-21:00 (gap), 22:00-22:30",isBi)
+              )
+            )
+          )
+        ),
+        // 備考
+        e("div",{style:{marginBottom:16}},
+          e("input",{type:"text",value:form.note,onChange:ev=>setForm(f=>({...f,note:ev.target.value})),className:"input-field",placeholder:L("備考（任意）","Note (optional)",isBi),disabled:!canEdit})
+        ),
+        // 退勤が出勤より早い場合の日またぎ警告
+        form.clockIn&&form.clockOut&&form.clockOut<form.clockIn&&e("div",{style:{background:"#fff3cd",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#856404",fontWeight:600}},
+          "⚠ 退勤時刻が出勤より早いため、翌日退勤として計算されます（日またぎシフト）"
+        ),
+        // 出退勤が同じ時刻の警告
+        form.clockIn&&form.clockOut&&form.clockIn===form.clockOut&&e("div",{style:{background:"#fee2e2",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#991b1b",fontWeight:600}},
+          "⚠ 出勤と退勤が同じ時刻です。24時間勤務として計算されます。正しいですか？"
+        ),
+        // 休憩が勤務時間外のバリデーション（日またぎ対応）
+        (()=>{
+          if(!form.clockIn||!form.clockOut)return null;
+          const invalidBreaks=form.breaks.filter(b=>b.start&&b.end&&!isRangeWithinShift(form.clockIn,form.clockOut,b.start,b.end));
+          if(invalidBreaks.length===0)return null;
+          return e("div",{style:{background:"#fee2e2",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#991b1b",fontWeight:600}},
+            "⚠ 勤務時間外の休憩があります（"+invalidBreaks.map(b=>b.start+"〜"+b.end).join("・")+"）"
+          );
+        })(),
+        // 移動時間が勤務時間外のバリデーション（モノレールのみ・日またぎ対応）
+        isConstruction&&(()=>{
+          if(!form.clockIn||!form.clockOut)return null;
+          const invalidTravels=(form.travelTimes||[]).filter(t=>t.start&&t.end&&!isRangeWithinShift(form.clockIn,form.clockOut,t.start,t.end));
+          if(invalidTravels.length===0)return null;
+          return e("div",{style:{background:"#fee2e2",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#991b1b",fontWeight:600}},
+            "⚠ "+L("勤務時間外の移動時間があります","Travel time outside work hours",isBi)+"（"+invalidTravels.map(t=>t.start+"〜"+t.end).join("・")+"）"
+          );
+        })(),
+        // 12時間超の警告
+        calc.workMinutes>720&&e("div",{style:{background:"#fff3cd",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#856404",fontWeight:600}},
+          "⚠ 実働時間が12時間を超えています（"+mHHMM(calc.workMinutes)+"）。入力内容を確認してください。"
+        ),
+        // 計算プレビュー
+        form.clockIn&&form.clockOut&&e("div",{style:{background:"#f8faff",borderRadius:10,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}},
+          ...[{label:L("実働時間","Work Hours",isBi),val:mHHMM(calc.workMinutes)},{label:L("残業時間","Overtime",isBi),val:mHHMM(calc.overtimeMinutes),color:calc.overtimeMinutes>0?"#d97706":undefined},{label:L("深夜時間","Late Night",isBi),val:mHHMM(calc.lateNightMinutes),color:calc.lateNightMinutes>0?"#7c3aed":undefined}]
+            .map(s=>e("div",{key:s.label,style:{textAlign:"center"}},e("div",{style:{fontSize:16,fontWeight:700,color:s.color||"#1e3a5f"}},s.val),e("div",{style:{fontSize:11,color:"#94a3b8",marginTop:2}},s.label)))
+        ),
+        // ボタン
+        monthClosed&&e("div",{style:{background:"#d1fae5",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#065f46",fontWeight:600}},
+          "🔒 "+monthOfEdit+"分は管理者により締め済みです。変更が必要な場合は管理者にご連絡ください。"
+        ),
+        !monthClosed&&rec.status==="approved"&&e("div",null,
+          e("p",{style:{color:"#059669",fontSize:13,fontWeight:600,marginBottom:4}},L("✓ 承認済みです。","✓ Approved.",isBi)),
+          e("p",{style:{fontSize:12,color:"#64748b"}},L("変更が必要な場合は管理者へ直接ご連絡ください。","Please contact your manager for changes.",isBi))
+        ),
+        !monthClosed&&rec.status==="submitted"&&e("div",null,
+          e("div",{style:{background:"#fff3cd",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#856404",fontWeight:600}},L("⚠ 承認待ちです","⚠ Pending Approval",isBi)),
+          e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8}},
+            e(ResetButton,{date:editDate,onConfirm:doReset}),
+            e("button",{className:"btn btn-primary",onClick:()=>doSave(true,true)},L("再提出する","Resubmit",isBi))
+          )
+        ),
+        !monthClosed&&rec.status==="rejected"&&e("div",null,
+          e("div",{style:{background:"#fee2e2",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#991b1b",fontWeight:600}},L("⚠ 差戻し中です。修正して再提出してください。","⚠ Returned. Please correct and resubmit.",isBi)),
+          e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8}},
+            e(ResetButton,{date:editDate,onConfirm:doReset}),
+            e("button",{className:"btn btn-primary",onClick:()=>doSave(true)},L("再提出する","Resubmit",isBi))
+          )
+        ),
+        !monthClosed&&(rec.status==="draft"||!rec.status)&&e("div",{style:{display:"flex",gap:10,alignItems:"center",justifyContent:"flex-end"}},
+          e("button",{className:"btn btn-primary",onClick:()=>doSave(true)},L("提出する","Submit",isBi))
+        )
+      ),
+      // 月次一覧タブ
+      activeTab==="monthly"&&e(MonthlyTable,{summary,currentUser,selectedMonth,isMgrClosed:isAdminClosed(currentUser.id,selectedMonth)}),
+      // 承認管理タブ（管理者のみ）
+      activeTab==="approval"&&isAdmin&&e(ApprovalTab,{currentUser,employees,admins,records,setRecords,saveRecord,saveRecords,selectedMonth,showToast})
+    ),
+    e("div",{style:{marginTop:16},className:"no-print"},e("button",{className:"btn btn-outline",onClick:()=>window.print()},L("🖨 月次集計を印刷","🖨 Print Monthly",isBi))),
+    e(PrintSummary,{summary,selectedMonth,isAdmin:canSeePay})
+  );
+}
+
+// ===== ADD EMPLOYEE FORM =====
+function AddEmployeeForm({employees,setEmployees,admins,setAdmins,showToast}){
+  const [show,setShow]=useState(false);
+  const [form,setForm]=useState({name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false});
+  if(!show)return e("button",{className:"btn btn-primary",style:{fontSize:12,padding:"6px 16px",marginBottom:8},onClick:()=>setShow(true)},"＋ スタッフを追加");
+  const save=()=>{
+    if(!form.name.trim()){showToast("氏名を入力してください","warning");return;}
+    const lid=String(form.loginId||"").trim().toLowerCase();
+    if(!lid){showToast("ログインIDを入力してください","warning");return;}
+    const dup=[...employees,...admins].some(x=>String(x.loginId||"").toLowerCase()===lid);
+    if(dup){showToast("このログインIDは既に使われています","warning");return;}
+    const allIds=[...employees,...admins].map(x=>x.id);
+    const newId=Math.max(...allIds,200)+1;
+    const newEmp={...form,loginId:lid,id:newId,passHash:null,
+      managedStores:form.role==="superadmin"?ALL_STORES.filter(s=>!INACTIVE_STORES.includes(s)):form.role!=="employee"?[form.store]:undefined,
+      bilingual:form.bilingual||false
+    };
+    if(form.role==="employee")setEmployees(prev=>[...prev,newEmp]);
+    else setAdmins(prev=>[...prev,newEmp]);
+    showToast(form.name+" を追加しました（初期パスワード: "+INITIAL_PASSWORD+"）");
+    setShow(false);setForm({name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false});
+  };
+  return e("div",{style:{background:"#f8faff",borderRadius:12,padding:16,marginBottom:16,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}},
+    e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"氏名"),e("input",{value:form.name,onChange:ev=>setForm(f=>({...f,name:ev.target.value})),className:"input-field",style:{padding:"6px 10px",width:110},placeholder:"氏名"})),
+    e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"ログインID"),e("input",{value:form.loginId,onChange:ev=>setForm(f=>({...f,loginId:ev.target.value})),className:"input-field",style:{padding:"6px 10px",width:170},placeholder:"example@tribe.jp"})),
+    e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"部署"),e("select",{value:form.department,onChange:ev=>{const d=ev.target.value;setForm(f=>({...f,department:d,store:DEPARTMENT_STORES[d]?.[0]||""}))},className:"input-field",style:{padding:"6px 10px"}},Object.keys(DEPARTMENT_STORES).map(d=>e("option",{key:d,value:d},d)))),
+    e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"店舗"),e("select",{value:form.store,onChange:ev=>setForm(f=>({...f,store:ev.target.value})),className:"input-field",style:{padding:"6px 10px"}},(DEPARTMENT_STORES[form.department]||[]).map(s=>e("option",{key:s,value:s},s)))),
+    e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"役割"),e("select",{value:form.role,onChange:ev=>setForm(f=>({...f,role:ev.target.value})),className:"input-field",style:{padding:"6px 10px"}},e("option",{value:"employee"},"一般"),e("option",{value:"admin"},"管理者"),e("option",{value:"superadmin"},"オーナー"))),
+    e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"給与体系"),e("select",{value:form.payType,onChange:ev=>setForm(f=>({...f,payType:ev.target.value})),className:"input-field",style:{padding:"6px 10px"}},e("option",{value:"hourly"},"時給制"),e("option",{value:"monthly"},"月給制"))),
+    form.payType==="monthly"
+      ?e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"月給"),e("input",{type:"number",value:form.monthlyWage,onChange:ev=>setForm(f=>({...f,monthlyWage:Number(ev.target.value)})),className:"input-field",style:{padding:"6px 10px",width:120},min:0}))
+      :e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"時給"),e("input",{type:"number",value:form.hourlyWage,onChange:ev=>setForm(f=>({...f,hourlyWage:Number(ev.target.value)})),className:"input-field",style:{padding:"6px 10px",width:90},min:0})),
+    e("div",{style:{display:"flex",alignItems:"center",gap:6,paddingBottom:2}},
+      e("input",{type:"checkbox",id:"bilingualCheck",checked:form.bilingual||false,onChange:ev=>setForm(f=>({...f,bilingual:ev.target.checked}))}),
+      e("label",{htmlFor:"bilingualCheck",style:{fontSize:12,color:"#1e3a5f",fontWeight:600,cursor:"pointer"}},"英語")
+    ),
+    e("div",{style:{display:"flex",gap:6}},
+      e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 14px"},onClick:save},"追加"),
+      e("button",{className:"btn btn-outline",style:{fontSize:12,padding:"6px 14px"},onClick:()=>setShow(false)},"キャンセル")
+    )
+  );
+}
+
+// ===== EMPLOYEE ROW (管理者ダッシュボード用) =====
+function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
+  const [ed,setEd]=useState(false);
+  const [form,setForm]=useState({...emp});
+  const roleLabel={employee:"一般",admin:"管理者",superadmin:"オーナー"};
+  const roleBg={employee:"#e8f0fe",admin:"#1e3a5f",superadmin:"#7c3aed"};
+  const roleColor={employee:"#1e3a5f",admin:"white",superadmin:"white"};
+  const passStatus=hash=>hash==null
+    ?e("span",{style:{fontSize:11,color:"#dc2626",fontWeight:700}},"初期PW")
+    :e("span",{style:{fontSize:11,color:"#059669",fontWeight:700}},"設定済み");
+
+  if(ed)return e("tr",null,
+    e("td",null,e("input",{value:form.name,onChange:ev=>setForm(f=>({...f,name:ev.target.value})),onCompositionEnd:ev=>setForm(f=>({...f,name:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:100}})),
+    e("td",null,e("input",{value:form.loginId||"",onChange:ev=>setForm(f=>({...f,loginId:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:160},placeholder:"example@tribe.jp"})),
+    e("td",null,e("select",{value:form.department,onChange:ev=>{const d=ev.target.value;setForm(f=>({...f,department:d,store:DEPARTMENT_STORES[d]?.[0]||""}))},className:"input-field",style:{padding:"5px 8px"}},
+      Object.keys(DEPARTMENT_STORES).map(d=>e("option",{key:d,value:d},d))
+    )),
+    e("td",null,e("select",{value:form.store,onChange:ev=>setForm(f=>({...f,store:ev.target.value})),className:"input-field",style:{padding:"5px 8px"}},
+      (DEPARTMENT_STORES[form.department]||[form.store]).map(s=>e("option",{key:s,value:s},s))
+    )),
+    e("td",null,e("select",{value:form.role,onChange:ev=>setForm(f=>({...f,role:ev.target.value})),className:"input-field",style:{padding:"5px 8px"}},
+      e("option",{value:"employee"},"一般"),e("option",{value:"admin"},"管理者"),e("option",{value:"superadmin"},"オーナー")
+    )),
+    e("td",null,
+      e("select",{value:form.payType||"hourly",onChange:ev=>setForm(f=>({...f,payType:ev.target.value})),className:"input-field",style:{padding:"4px 6px",width:80,marginBottom:4,fontSize:11}},e("option",{value:"hourly"},"時給"),e("option",{value:"monthly"},"月給")),
+      (form.payType==="monthly")
+        ?e("input",{type:"number",value:form.monthlyWage||0,onChange:ev=>setForm(f=>({...f,monthlyWage:Number(ev.target.value)})),className:"input-field",style:{padding:"5px 8px",width:110},min:0})
+        :e("input",{type:"number",value:form.hourlyWage,onChange:ev=>setForm(f=>({...f,hourlyWage:Number(ev.target.value)})),className:"input-field",style:{padding:"5px 8px",width:100},min:0})
+    ),
+    // 担当店舗（管理者・オーナーのみ複数選択）
+    e("td",null,
+      (form.role==="admin"||form.role==="superadmin")
+        ?e("div",{style:{display:"flex",flexWrap:"wrap",gap:4}},
+          ALL_STORES.filter(s=>!INACTIVE_STORES.includes(s)).map(s=>e("label",{key:s,style:{display:"flex",alignItems:"center",gap:3,fontSize:11,cursor:"pointer"}},
+            e("input",{type:"checkbox",checked:(form.managedStores||[]).includes(s),onChange:ev=>{setForm(f=>{const ms=f.managedStores||[];return{...f,managedStores:ev.target.checked?[...ms,s]:ms.filter(x=>x!==s)};})}}),s
+          ))
+        )
+        :e("span",{style:{fontSize:11,color:"#94a3b8"}},"—")
+    ),
+    e("td",null,passStatus(form.passHash)),
+    e("td",null,
+      e("input",{type:"checkbox",checked:form.bilingual||false,onChange:ev=>setForm(f=>({...f,bilingual:ev.target.checked}))})
+    ),
+    e("td",null,e("div",{style:{display:"flex",gap:6}},
+      e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{onSave(form);setEd(false);}},"保存"),
+      e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 10px"},onClick:()=>setEd(false)},"取消")
+    ))
+  );
+
+  return e("tr",null,
+    e("td",{style:{fontWeight:600}},emp.name),
+    e("td",{style:{fontSize:11,color:"#64748b"}},emp.loginId||"—"),
+    e("td",{style:{fontSize:12,color:"#64748b"}},emp.department),
+    e("td",{style:{fontSize:12,color:"#64748b"}},emp.store),
+    e("td",null,e("span",{style:{fontSize:11,background:roleBg[emp.role]||"#e8f0fe",color:roleColor[emp.role]||"#1e3a5f",padding:"2px 8px",borderRadius:20,fontWeight:700}},roleLabel[emp.role]||emp.role)),
+    e("td",{style:{fontWeight:700,color:"#1e3a5f"}},emp.payType==="monthly"?"月 ¥"+(emp.monthlyWage||0).toLocaleString():"¥"+(emp.hourlyWage||0).toLocaleString()),
+    e("td",{style:{fontSize:12,color:"#64748b"}},(emp.role==="employee")?"—":(emp.managedStores||[emp.store]).join("・")),
+    e("td",null,passStatus(emp.passHash)),
+    e("td",{style:{textAlign:"center"}},
+      emp.bilingual?e("span",{style:{fontSize:12,color:"#059669",fontWeight:700}},"✓"):e("span",{style:{fontSize:12,color:"#94a3b8"}},"—")
+    ),
+    e("td",null,e("div",{style:{display:"flex",gap:6}},
+      e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{setForm({...emp});setEd(true);}},"編集"),
+      e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{if(confirm(emp.name+"のパスワードを初期パスワードにリセットしますか？"))onPassReset(emp);}},"PWリセット"),
+      e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px",background:"#7c3aed",borderColor:"#7c3aed"},onClick:()=>{if(confirm(emp.name+"を削除しますか？"))onDelete(emp);}},"削除")
+    ))
+  );
+}
+
+// ===== ADMIN DASHBOARD (オーナーのみ) =====
+function AdminDashboard({employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView}){
+  const [tab,setTab]=useState("summary");
+  const [selEmp,setSelEmp]=useState(null);
+  const isSuperAdmin=currentUser?.role==="superadmin";
+  const [showPinChange,setShowPinChange]=useState(currentUser?.passHash==null);
+  const [showHelp,setShowHelp]=useState(false);
+
+  const savePassToList=hash=>{
+    const upd={...currentUser,passHash:hash};
+    const inAdmins=(admins||[]).some(x=>x.id===currentUser.id);
+    if(inAdmins)setAdmins(prev=>prev.map(x=>x.id===currentUser.id?upd:x));
+    else setEmployees(prev=>prev.map(x=>x.id===currentUser.id?upd:x));
+    setCurrentUser(upd);showToast("パスワードを変更しました");
+  };
+
+  return e("div",null,
+    showPinChange&&e(PasswordChangeModal,{currentUser,isForced:currentUser?.passHash==null,
+      onCancel:()=>{
+        if(currentUser?.passHash==null){
+          setCurrentUser(null);setView("login");
+        } else {
+          setShowPinChange(false);
+        }
+      },
+      onDone:hash=>{savePassToList(hash);setShowPinChange(false);}
+    }),
+    showHelp&&e(HelpModal,{isAdmin:true,isOwner:currentUser?.role==="superadmin",onClose:()=>setShowHelp(false)}),
+    e("div",{className:"no-print",style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}},
+      e("h2",{style:{fontSize:20,fontWeight:700,color:"#1e3a5f"}},"管理者ダッシュボード"),
+      e("div",{style:{display:"flex",gap:10}},
+        e("button",{className:"btn btn-outline",onClick:()=>setShowHelp(true)},"❓ 使い方"),
+        e("input",{type:"month",value:selectedMonth,onChange:ev=>setSelectedMonth(ev.target.value),className:"input-field",style:{width:"auto"}}),
+        e("button",{className:"btn btn-outline",onClick:()=>window.print()},
+          tab==="employees"
+            ?"🖨 従業員一覧を印刷"
+            :selEmp
+              ?"🖨 "+([...employees,...admins].find(x=>x.id===selEmp)?.name||"")+"さんの明細を印刷"
+              :"🖨 全員分を印刷"
+        )
+      )
+    ),
+    e("div",{style:{display:"flex",borderBottom:"2px solid #e2e8f0",marginBottom:20,gap:4},className:"no-print"},
+      [["summary","📊 月次集計"],["employees","👥 従業員設定"]].map(([k,l])=>
+        e("button",{key:k,className:`tab ${tab===k?"active":""}`,onClick:()=>setTab(k)},l)
+      )
+    ),
+    // 月次集計
+    tab==="summary"&&e("div",null,
+      e("div",{className:"no-print",style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginBottom:20}},
+        ...[...employees,...admins].map(emp=>{
+          const s=getMonthlySummary(emp.id);
+          return e("div",{key:emp.id,className:"stat-box",style:{cursor:"pointer",border:selEmp===emp.id?"2px solid #1e3a5f":"2px solid transparent"},onClick:()=>setSelEmp(selEmp===emp.id?null:emp.id)},
+            e("div",{style:{marginBottom:8}},
+              e("div",{style:{fontWeight:700,fontSize:13,color:"#1e3a5f"}},emp.name),
+              e("div",{style:{fontSize:10,color:"#94a3b8"}},emp.store)
+            ),
+            e("div",{style:{fontSize:18,fontWeight:700,color:"#059669"}},"¥"+s.totalPay.toLocaleString()),
+            e("div",{style:{fontSize:10,color:"#94a3b8",marginTop:2}},mHHMM(s.totalWork))
+          );
+        })
+      ),
+      selEmp&&e("div",{className:"card no-print"},
+        e("h3",{style:{fontSize:15,fontWeight:700,color:"#1e3a5f",marginBottom:12}},[...employees,...admins].find(x=>x.id===selEmp)?.name+" の月次明細"),
+        e(MonthlyTable,{summary:getMonthlySummary(selEmp),currentUser,selectedMonth,isMgrClosed:isAdminClosed(selEmp,selectedMonth)})
+      ),
+      // 印刷対象：スタッフ選択中はその1人だけ、未選択なら全員（1人1ページ）
+      ...[...employees,...admins]
+        .filter(emp=>!selEmp||emp.id===selEmp)
+        .map(emp=>e(PrintSummary,{key:emp.id,summary:getMonthlySummary(emp.id),selectedMonth,isAdmin:true}))
+    ),
+    // 従業員設定
+    tab==="employees"&&e("div",null,
+      e("div",{className:"card no-print"},
+      e("h3",{style:{fontSize:15,fontWeight:700,color:"#1e3a5f",marginBottom:16}},"従業員設定"),
+      // 新規追加フォーム
+      e(AddEmployeeForm,{employees,setEmployees,admins,setAdmins,showToast}),
+      e("div",{style:{overflowX:"auto",marginTop:16}},e("table",{className:"table",style:{fontSize:12}},
+        e("thead",null,e("tr",null,["氏名","ログインID","部署","店舗","役割","給与","担当店舗","パスワード","英語","操作"].map(h=>e("th",{key:h},h)))),
+        e("tbody",null,...[...employees,...admins].map(emp=>e(EmployeeRow,{key:emp.id,emp,isSuperAdmin,
+          onSave:upd=>{
+            const lid=String(upd.loginId||"").trim().toLowerCase();
+            if(!lid){showToast("ログインIDを入力してください","warning");return;}
+            const dup=[...employees,...admins].some(x=>x.id!==upd.id&&String(x.loginId||"").toLowerCase()===lid);
+            if(dup){showToast("このログインIDは既に使われています","warning");return;}
+            upd={...upd,loginId:lid};
+            const wasAdmin=admins.some(x=>x.id===upd.id);
+            const shouldBeAdmin=upd.role!=="employee";
+            // 役割に応じた担当店舗の初期化・整理
+            if(shouldBeAdmin&&(!upd.managedStores||upd.managedStores.length===0)){
+              upd={...upd,managedStores:upd.role==="superadmin"?ALL_STORES.filter(s=>!INACTIVE_STORES.includes(s)):[upd.store]};
+            }
+            if(!shouldBeAdmin)upd={...upd,managedStores:undefined};
+            // 役割変更時はemployees⇔admins間で配列を移動
+            if(wasAdmin&&!shouldBeAdmin){
+              setAdmins(prev=>prev.filter(x=>x.id!==upd.id));
+              setEmployees(prev=>[...prev.filter(x=>x.id!==upd.id),upd]);
+            }else if(!wasAdmin&&shouldBeAdmin){
+              setEmployees(prev=>prev.filter(x=>x.id!==upd.id));
+              setAdmins(prev=>[...prev.filter(x=>x.id!==upd.id),upd]);
+            }else if(wasAdmin){
+              setAdmins(prev=>prev.map(x=>x.id===upd.id?upd:x));
+            }else{
+              setEmployees(prev=>prev.map(x=>x.id===upd.id?upd:x));
+            }
+            showToast(upd.name+" を更新しました");
+          },
+          onDelete:emp=>{
+            const inAdmins=admins.some(x=>x.id===emp.id);
+            if(inAdmins)setAdmins(prev=>prev.filter(x=>x.id!==emp.id));
+            else setEmployees(prev=>prev.filter(x=>x.id!==emp.id));
+            showToast(emp.name+" を削除しました","warning");
+          },
+          onPassReset:emp=>{
+            const inAdmins=admins.some(x=>x.id===emp.id);
+            if(inAdmins)setAdmins(prev=>prev.map(x=>x.id===emp.id?{...x,passHash:null}:x));
+            else setEmployees(prev=>prev.map(x=>x.id===emp.id?{...x,passHash:null}:x));
+            showToast(emp.name+" のパスワードをリセットしました（初期パスワード: "+INITIAL_PASSWORD+"）");
+          }
+        })))
+      ))),
+      // 印刷用の従業員一覧（画面には出ない）
+      e("div",{className:"print-only",style:{display:"none"}},
+        e("h2",{style:{fontSize:14,marginBottom:4}},"従業員一覧"),
+        e("p",{style:{fontSize:10,marginBottom:8,color:"#666"}},"出力日: "+formatDate(new Date())+" ／ 全"+([...employees,...admins].length)+"名"),
+        e("table",{className:"print-table"},
+          e("colgroup",null,...[16,24,12,16,9,11,12].map((w,i)=>e("col",{key:i,style:{width:w+"%"}}))),
+          e("thead",null,e("tr",null,...["氏名","ログインID","部署","所属店舗","役割","給与","担当店舗"].map(h=>e("th",{key:h},h)))),
+          e("tbody",null,...[...employees,...admins].map(emp=>e("tr",{key:emp.id},
+            e("td",{className:"c-nowrap"},emp.name),
+            e("td",{className:"c-wrap"},emp.loginId||"—"),
+            e("td",{className:"c-nowrap"},emp.department||"—"),
+            e("td",{className:"c-wrap"},emp.store||"—"),
+            e("td",{className:"c-nowrap"},{employee:"一般",admin:"管理者",superadmin:"オーナー"}[emp.role]||emp.role),
+            e("td",{className:"c-nowrap c-right"},emp.payType==="monthly"?"月 "+(emp.monthlyWage||0).toLocaleString():(emp.hourlyWage||0).toLocaleString()+"/h"),
+            e("td",{className:"c-wrap"},emp.role==="employee"?"—":(emp.managedStores||[emp.store]).join("・"))
+          )))
+        )
+      )
+    )
+  );
+}
+
+// ===== MAIN APP =====
+function App(){
+  const [employees,setEmpRaw]=useState(()=>migrateAuth(loadLS("kintai_employees",INITIAL_EMPLOYEES),INITIAL_EMPLOYEES));
+  const [admins,setAdminsRaw]=useState(()=>migrateAuth(loadLS("kintai_admins",INITIAL_ADMINS),INITIAL_ADMINS));
+  const [records,setRecRaw]=useState(()=>loadLS("kintai_records",{}));
+  const [view,setViewRaw]=useState(()=>{try{const s=JSON.parse(localStorage.getItem("kintai_session")||"null");if(s&&s.view&&s.view!=="login")return s.view;}catch{}return "login";});
+  const setView=v=>{setViewRaw(v);try{const cu=JSON.parse(localStorage.getItem("kintai_session")||"null");if(cu)saveLS("kintai_session",{...cu,view:v,ts:Date.now()});}catch{}};
+  const [currentUser,setCUraw]=useState(()=>{
+    try{const s=JSON.parse(localStorage.getItem("kintai_session")||"null");
+      if(s){const emps=migrateAuth(loadLS("kintai_employees",INITIAL_EMPLOYEES),INITIAL_EMPLOYEES);const adms=migrateAuth(loadLS("kintai_admins",INITIAL_ADMINS),INITIAL_ADMINS);
+        return emps.find(x=>x.id===s.empId)||adms.find(x=>x.id===s.empId)||null;}}catch{}return null;
+  });
+  // ログイン状態はログアウトするまで保持する（時間による自動ロックはしない）
+  const [selectedMonth,setSelectedMonth]=useState(`${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,"0")}`);
+  const [toast,setToast]=useState(null);
+  // スタッフ情報のGAS同期は状態更新の外で行う（更新関数内で通信すると二重送信になるため）
+  const pendingStaffSync=useRef(null);
+  const staffSyncing=useRef(false);
+  const [syncBusy,setSyncBusy]=useState(false);
+  useEffect(()=>{
+    if(!pendingStaffSync.current)return;
+    const p=pendingStaffSync.current;
+    pendingStaffSync.current=null;
+    staffSyncing.current=true;setSyncBusy(true);
+    const done=ok=>{
+      staffSyncing.current=false;setSyncBusy(false);
+      if(ok)setToast({msg:"スタッフ情報を保存しました",type:"success"});
+      else setToast({msg:"保存できませんでした。通信環境を確認して、もう一度保存してください。",type:"warning"});
+      setTimeout(()=>setToast(null),3000);
+    };
+    gasPost("saveStaff",p).then(r=>done(!!(r&&r.success!==false))).catch(()=>done(false));
+  });
+  // 保存が終わる前にページを閉じようとしたら警告する（変更が消えるのを防ぐ）
+  useEffect(()=>{
+    const h=ev=>{if(staffSyncing.current){ev.preventDefault();ev.returnValue="";}};
+    window.addEventListener("beforeunload",h);
+    return ()=>window.removeEventListener("beforeunload",h);
+  },[]);
+
+  // 状態更新は必ずReactの最新値(prev)を基準にする
+  // （素早い連続操作でも更新が失われないようにするため）
+  const setEmployees=v=>{
+    setEmpRaw(prev=>{
+      const nx=typeof v==="function"?v(prev):v;
+      saveLS("kintai_employees",nx);
+      pendingStaffSync.current={type:"employees",data:nx};
+      return nx;
+    });
+  };
+  const setAdmins=v=>{
+    setAdminsRaw(prev=>{
+      const nx=typeof v==="function"?v(prev):v;
+      saveLS("kintai_admins",nx);
+      pendingStaffSync.current={type:"admins",data:nx};
+      return nx;
+    });
+  };
+  const setRecords=v=>{
+    setRecRaw(prev=>{
+      const nx=typeof v==="function"?v(prev):v;
+      saveLS("kintai_records",nx);
+      return nx;
+    });
+  };
+
+  // GASから初期データ取得
+  useEffect(()=>{
+    async function loadFromGAS(){
+      try{
+        const [empRes,admRes,recRes]=await Promise.all([gasGet("getEmployees"),gasGet("getAdmins"),gasGet("getRecords")]);
+        if(empRes.success&&Array.isArray(empRes.data)&&empRes.data.length>0){
+          const mig=migrateAuth(empRes.data,INITIAL_EMPLOYEES);
+          saveLS("kintai_employees",mig);setEmpRaw(mig);
+        }
+        if(admRes.success&&Array.isArray(admRes.data)&&admRes.data.length>0){
+          const mig=migrateAuth(admRes.data,INITIAL_ADMINS);
+          saveLS("kintai_admins",mig);setAdminsRaw(mig);
+        }
+        // 勤怠レコードもGASから取得してマージ（他端末で提出されたデータを反映）
+        // ローカルの「下書き」は未同期の作業中データなので上書きしない
+        if(recRes.success&&Array.isArray(recRes.data)){
+          setRecRaw(prev=>{
+            const merged={...prev};
+            recRes.data.forEach(sr=>{
+              if(!sr||sr.empId==null||!sr.date)return;
+              const id=Number(sr.empId);
+              if(!Number.isFinite(id))return;
+              const cur=(merged[id]||{})[sr.date];
+              if(cur&&cur.status==="draft")return;
+              merged[id]={...(merged[id]||{}),[sr.date]:{...sr,empId:id}};
+            });
+            saveLS("kintai_records",merged);
+            return merged;
+          });
+        }
+      }catch(e){console.error("GAS初期ロードエラー:",e);}
+    }
+    loadFromGAS();
+  },[]);
+  const setCurrentUser=emp=>{
+    if(emp)saveLS("kintai_session",{empId:emp.id,role:emp.role,ts:Date.now()});
+    else try{localStorage.removeItem("kintai_session");}catch{}
+    setCUraw(emp);
+  };
+  const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
+
+  useEffect(()=>{
+    if(!currentUser)return;
+    const t=setInterval(()=>{
+      saveLS("kintai_session",{empId:currentUser.id,role:currentUser.role,view,ts:Date.now()});
+    },5*60*1000);
+    return()=>clearInterval(t);
+  },[currentUser,view]);
+
+  const getRecord=(empId,date)=>records[empId]?.[date]||{empId,date,clockIn:"",clockOut:"",breaks:[{start:"",end:""}],status:"draft",note:"",hourlyWage:[...employees,...admins].find(x=>x.id===empId)?.hourlyWage??1000};
+  const saveRecord=rec=>{
+    if(currentUser&&currentUser.role==="employee"&&rec.empId!==currentUser.id){showToast("他のユーザーのデータは編集できません","warning");return;}
+    setRecords(prev=>({...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...rec}}}));
+    // GASに非同期で保存（下書き以外）
+    if(rec.status&&rec.status!=="draft"){
+      const empName=[...employees,...admins].find(x=>x.id===rec.empId)?.name||"";
+      gasPost("saveRecord",{record:{...rec,empName}}).catch(e=>console.error("GAS保存エラー:",e));
+    }
+  };
+  const saveRecords=recs=>{
+    setRecords(prev=>{
+      const next={...prev};
+      recs.forEach(rec=>{next[rec.empId]={...(next[rec.empId]||{}),[rec.date]:{...rec}};});
+      return next;
+    });
+    // GASに非同期で一括保存（下書き以外）
+    recs.filter(r=>r.status&&r.status!=="draft").forEach(rec=>{
+      const empName=[...employees,...admins].find(x=>x.id===rec.empId)?.name||"";
+      gasPost("saveRecord",{record:{...rec,empName}}).catch(e=>console.error("GAS保存エラー:",e));
+    });
+  };
+  const submitRecord=rec=>{saveRecord({...rec,status:"submitted"});showToast("提出しました");};
+
+  const getMonthlySummary=empId=>{
+    const emp=[...employees,...admins].find(x=>x.id===empId);
+    const allDays=Object.values(records[empId]||{}).filter(r=>r.date?.startsWith(selectedMonth));
+    let tw=0,to=0,tp=0,tl=0,wd=0;
+    const dd=allDays.map(r=>{
+      // 保存時に記録した時給を優先（後から時給変更しても過去月は変わらない）
+      const c=calcRecord({...r,hourlyWage:r.hourlyWage!=null?r.hourlyWage:(emp?.hourlyWage??1000)});
+      // 給与・勤務日数は承認済みのみカウント
+      if(r.status==="approved"){tw+=c.workMinutes;to+=c.overtimeMinutes;tp+=c.pay;tl+=c.lateNightMinutes;wd++;}
+      return{...r,...c};
+    });
+    // 月給制：勤務日数が1日以上あれば固定の月給額。日給は表示しない
+    const isMonthly=emp?.payType==="monthly";
+    const monthlyPay=isMonthly?(wd>0?(emp?.monthlyWage||0):0):tp;
+    return{emp,days:dd.sort((a,b)=>a.date>b.date?1:-1),totalWork:tw,totalOvertime:to,totalPay:monthlyPay,totalLateNight:tl,workDays:wd,isMonthly};
+  };
+
+  const handleLogin=emp=>{
+    setCurrentUser(emp);setView("employee");
+  };
+  const handleAdminLogin=adm=>{
+    setCurrentUser(adm);
+    setView(adm.role==="superadmin"?"dashboard":"employee");
+  };
+  const handleBack=()=>{
+    setCurrentUser(null);setView("login");
+  };
+
+  if(view==="login"||!currentUser)return e("div",null,
+    e(LoginScreen,{employees,admins,onLogin:handleLogin,onAdminLogin:handleAdminLogin}),
+    toast&&e("div",{className:`toast-center toast-center-${toast.type}`},
+      e("div",{style:{fontSize:20,marginBottom:8}},toast.type==="warning"?"⚠️":"✅"),
+      toast.msg
+    ),
+    // スタッフ情報を保存中の表示（閉じると変更が消えるため知らせる）
+    syncBusy&&e("div",{style:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",
+      background:"#1e3a5f",color:"white",padding:"9px 18px",borderRadius:20,fontSize:13,
+      fontWeight:700,zIndex:1200,boxShadow:"0 2px 10px rgba(0,0,0,.25)"}},"保存中… そのままお待ちください")
+  );
+
+  return e("div",{style:{fontFamily:"'Noto Sans JP',sans-serif",minHeight:"100vh",background:"#f0f2f5"}},
+    e("nav",{className:"nav no-print"},
+      e("div",{className:"nav-brand"},"⏱ 勤怠管理システム"),
+      e("div",{style:{display:"flex",alignItems:"center",gap:10}},
+        currentUser.role==="superadmin"&&e("span",{style:{fontSize:11,background:"rgba(124,58,237,.6)",padding:"2px 8px",borderRadius:20}},"オーナー"),
+        currentUser.role==="admin"&&e("span",{style:{fontSize:11,background:"rgba(255,255,255,.2)",padding:"2px 8px",borderRadius:20}},"管理者"),
+        e("button",{style:{fontSize:12,padding:"5px 12px",background:"transparent",color:"white",border:"1px solid rgba(255,255,255,.4)",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},
+          onClick:()=>{saveLS("kintai_session",{empId:currentUser.id,role:currentUser.role,view:"login",ts:Date.now()});setCurrentUser(null);setView("login");}},"⌂ ログアウト"),
+        // オーナーのみダッシュボードへのリンク
+        view==="employee"&&currentUser.role==="superadmin"&&e("button",{style:{fontSize:12,padding:"5px 12px",background:"rgba(124,58,237,.6)",color:"white",border:"none",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},onClick:()=>setView("dashboard")},"📊 ダッシュボード"),
+        view==="dashboard"&&currentUser.role==="superadmin"&&e("button",{style:{fontSize:12,padding:"5px 12px",background:"rgba(255,255,255,.2)",color:"white",border:"none",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},onClick:()=>setView("employee")},"← マイ勤怠")
+      )
+    ),
+    e("div",{style:{maxWidth:1100,margin:"0 auto",padding:"24px 20px"}},
+      e("div",null,
+          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}),
+          (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView})
+        )
+    ),
+    toast&&e("div",{className:`toast-center toast-center-${toast.type}`},
+      e("div",{style:{fontSize:20,marginBottom:8}},toast.type==="warning"?"⚠️":"✅"),
+      toast.msg
+    ),
+    // スタッフ情報を保存中の表示（閉じると変更が消えるため知らせる）
+    syncBusy&&e("div",{style:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",
+      background:"#1e3a5f",color:"white",padding:"9px 18px",borderRadius:20,fontSize:13,
+      fontWeight:700,zIndex:1200,boxShadow:"0 2px 10px rgba(0,0,0,.25)"}},"保存中… そのままお待ちください")
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(e(App));
+</script>
+</body>
+</html>
