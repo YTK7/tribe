@@ -67,14 +67,28 @@ body{font-family:'Noto Sans JP','Hiragino Sans',sans-serif;background:#f0f2f5;mi
   .btn{padding:8px 12px;font-size:13px}
   .nav-brand{font-size:13px}
   .nav{height:auto;min-height:56px;padding:8px 16px;gap:8px}
-  .table th,.table td{padding:8px 8px;font-size:11px}
+  .table th,.table td{padding:8px 8px;font-size:11px;white-space:nowrap}
   .tab{padding:8px 10px;font-size:12px}
   .stat-box{padding:12px 14px}
   .pin-key{height:48px;font-size:18px}
   .stat-grid{grid-template-columns:repeat(2,1fr)!important}
   .emp-header{flex-wrap:wrap!important;gap:8px!important}
   .emp-header-left{flex-wrap:wrap!important;gap:8px!important}
+  /* 画面外へのはみ出しを防ぐ */
+  body{overflow-x:hidden}
+  .input-field{max-width:100%}
+  /* iOSで入力欄をタップすると拡大されるのを防ぐ（16px以上が必要） */
+  input,select,textarea{font-size:16px!important}
+  /* 指でタップしやすい高さを確保する */
+  .btn{min-height:40px}
+  input,select{min-height:42px}
 }
+/* Android/iOSで端末の文字サイズ設定により表示が崩れるのを防ぐ */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+/* 横方向のはみ出し対策（どの端末でも） */
+body{overflow-x:hidden}
+/* 表は指でスクロールしやすくする */
+.table{width:100%}
 </style>
 </head>
 <body>
@@ -514,8 +528,8 @@ function PasswordChangeModal({currentUser,onDone,onCancel,isForced}){
     onDone(h);
   };
   const inputStyle={width:"100%",padding:"11px 14px",border:"1.5px solid #d1d5db",borderRadius:8,fontFamily:"inherit",fontSize:15,outline:"none"};
-  return e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",backdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}},
-    e("div",{style:{background:"white",borderRadius:20,padding:28,width:360,maxWidth:"95vw"}},
+  return e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",backdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}},
+    e("div",{style:{background:"white",borderRadius:20,padding:28,width:360,maxWidth:"95vw",maxHeight:"100%",overflowY:"auto",margin:"auto"}},
       e("div",{style:{fontSize:32,marginBottom:8,textAlign:"center"}},"🔐"),
       e("h3",{style:{fontSize:16,fontWeight:700,color:"#1e3a5f",marginBottom:6,textAlign:"center"}},
         isForced?L("パスワードの設定が必要です","Password Setup Required",isBi):L("パスワード変更","Change Password",isBi)
@@ -564,7 +578,7 @@ function LoginScreen({employees,admins,onLogin,onAdminLogin}){
   return e("div",{style:{minHeight:"100vh",background:"#f0f2f5",display:"flex",flexDirection:"column"}},
     e("nav",{className:"nav"},e("div",{className:"nav-brand"},"⏱ 勤怠管理システム")),
     e("div",{style:{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:24}},
-      e("div",{style:{width:400,maxWidth:"100%"}},
+      e("div",{style:{width:400,maxWidth:"100%",boxSizing:"border-box"}},
         e("div",{className:"card"},
           e("h2",{style:{fontSize:18,fontWeight:700,color:"#1e3a5f",marginBottom:4,textAlign:"center"}},"ログイン"),
           e("p",{style:{fontSize:12,color:"#94a3b8",marginBottom:20,textAlign:"center"}},"ログインIDとパスワードを入力してください"),
@@ -866,10 +880,11 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     ),
     // 選択スタッフの日別一覧
     selEmp&&e("div",null,
-      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
+      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}},
         e("div",{style:{fontWeight:700,fontSize:14,color:"#1e3a5f"}},selEmp.name+" の"+approvalMonth+"の勤怠"),
         selRecs.filter(r=>r.status==="submitted").length>0&&e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},onClick:approveAll},"✓ 承認待ちを一括承認")
       ),
+      e("div",{style:{overflowX:"auto"}},
       e("table",{className:"table",style:{fontSize:13}},
         e("thead",null,e("tr",null,["日付","店舗","出勤","退勤","休憩",...(showTravel?["移動"]:[]),"備考","実働","状態","操作"].map(h=>e("th",{key:h},h)))),
         e("tbody",null,...selRecs.map((r,i)=>{
@@ -922,6 +937,7 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
             )
           );
         }))
+      )
       )
     ),
     !selEmp&&e("p",{style:{textAlign:"center",color:"#94a3b8",padding:"32px"}},"上のスタッフ名を選択すると日別一覧が表示されます")
@@ -1149,8 +1165,8 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
           e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("対象店舗","Store",isBi)),
           e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
             storeLocked
-              ?e("div",{style:{width:200,padding:"9px 12px",border:"1.5px solid #e2e8f0",borderRadius:8,background:"#f1f5f9",color:"#475569",fontSize:14,fontWeight:600}},selectedStore||"—")
-              :e("select",{value:selectedStore,onChange:ev=>setSelectedStore(ev.target.value),className:"input-field",style:{width:200}},
+              ?e("div",{style:{width:200,maxWidth:"100%",flex:"1 1 160px",padding:"9px 12px",border:"1.5px solid #e2e8f0",borderRadius:8,background:"#f1f5f9",color:"#475569",fontSize:14,fontWeight:600}},selectedStore||"—")
+              :e("select",{value:selectedStore,onChange:ev=>setSelectedStore(ev.target.value),className:"input-field",style:{width:200,maxWidth:"100%",flex:"1 1 160px"}},
                   allStores.filter(s=>!INACTIVE_STORES.includes(s)).map(s=>e("option",{key:s,value:s},s))
                 ),
             e("span",{className:`status-badge ${S_CLASS[rec.status||"draft"]}`},S_LABEL[rec.status||"draft"]),
@@ -1167,7 +1183,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
           ),
           e("div",{style:{display:"flex",alignItems:"center",gap:8}},
             e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()-1);changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"−"),
-            e("input",{type:"date",value:editDate,onChange:ev=>changeDate(ev.target.value),className:"input-field",style:{width:160},max:todayStr}),
+            e("input",{type:"date",value:editDate,onChange:ev=>changeDate(ev.target.value),className:"input-field",style:{flex:"1 1 auto",minWidth:0},max:todayStr}),
             e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()+1);if(formatDate(d)<=todayStr)changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"＋")
           )
         ),
@@ -1227,10 +1243,10 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
             e("div",{style:{fontSize:11,color:"#64748b",fontWeight:700,marginBottom:8}},
               L("別店舗の時間帯を選んで「追加」を押すと、備考欄に記録されます","Select the time and store, then press Add",isBi)),
             e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}},
-              e("input",{type:"time",value:subFrom,onChange:ev=>setSubFrom(ev.target.value),className:"input-field",style:{width:120},disabled:!canEdit}),
+              e("input",{type:"time",value:subFrom,onChange:ev=>setSubFrom(ev.target.value),className:"input-field",style:{width:120,flex:"1 1 100px",minWidth:0},disabled:!canEdit}),
               e("span",{style:{color:"#94a3b8"}},"〜"),
-              e("input",{type:"time",value:subTo,onChange:ev=>setSubTo(ev.target.value),className:"input-field",style:{width:120},disabled:!canEdit}),
-              e("select",{value:subStore,onChange:ev=>setSubStore(ev.target.value),className:"input-field",style:{width:180},disabled:!canEdit},
+              e("input",{type:"time",value:subTo,onChange:ev=>setSubTo(ev.target.value),className:"input-field",style:{width:120,flex:"1 1 100px",minWidth:0},disabled:!canEdit}),
+              e("select",{value:subStore,onChange:ev=>setSubStore(ev.target.value),className:"input-field",style:{width:180,maxWidth:"100%",flex:"1 1 140px"},disabled:!canEdit},
                 allStores.filter(s=>!INACTIVE_STORES.includes(s)).map(s=>e("option",{key:s,value:s},s))
               ),
               e("button",{type:"button",disabled:!canEdit,className:"btn btn-primary",style:{fontSize:13,padding:"8px 18px"},
@@ -1477,9 +1493,9 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,selectedMonth,s
       onDone:hash=>{savePassToList(hash);setShowPinChange(false);}
     }),
     showHelp&&e(HelpModal,{isAdmin:true,isOwner:currentUser?.role==="superadmin",onClose:()=>setShowHelp(false)}),
-    e("div",{className:"no-print",style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}},
+    e("div",{className:"no-print",style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,gap:10,flexWrap:"wrap"}},
       e("h2",{style:{fontSize:20,fontWeight:700,color:"#1e3a5f"}},"管理者ダッシュボード"),
-      e("div",{style:{display:"flex",gap:10}},
+      e("div",{style:{display:"flex",gap:10,flexWrap:"wrap"}},
         e("button",{className:"btn btn-outline",onClick:()=>setShowHelp(true)},"❓ 使い方"),
         e("input",{type:"month",value:selectedMonth,onChange:ev=>setSelectedMonth(ev.target.value),className:"input-field",style:{width:"auto"}}),
         e("button",{className:"btn btn-outline",onClick:()=>window.print()},
