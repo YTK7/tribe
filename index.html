@@ -133,7 +133,7 @@ const DEPARTMENT_STORES = {
   "建設部門":["モノレール"],"飲食部門":["GOLF BAR KING","JP BAR KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","イベント出店"],
   "美容院部門":["Qlotho by KING"],"アパレル部門":["架設中"],"営業部門":["営業"],
 };
-const OVERTIME_THRESHOLD=8,PIN_SKIP_MS=30*60*1000;
+const OVERTIME_THRESHOLD=8;
 const INITIAL_PASSWORD="000000";  // 初期パスワード（初回ログイン後に変更必須）
 const PASSWORD_MIN=6;             // 新パスワードの最低文字数
 const TODAY=new Date();
@@ -154,7 +154,6 @@ const CONSTRUCTION_IDS=[1,2,13,14,101,102,103,104,105,106,107,111,113,116];
 function L(ja,en,isBi){return isBi?`${ja} / ${en}`:ja;}
 function loadLS(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}}
 function saveLS(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}
-function savePinAuth(id){try{localStorage.setItem(`kintai_pin_auth_${id}`,String(Date.now()))}catch{}}
 
 // ===== パスワード認証（SHA-256ハッシュ化して保存） =====
 async function sha256(str){
@@ -542,32 +541,6 @@ function PasswordChangeModal({currentUser,onDone,onCancel,isForced}){
   );
 }
 
-// ===== PASSWORD LOCK SCREEN（30分経過後の再認証） =====
-function PasswordLockScreen({user,onUnlock,onSwitch}){
-  const [pw,setPw]=useState("");const [err,setErr]=useState(null);const [busy,setBusy]=useState(false);
-  const [showPw,setShowPw]=useState(false);
-  const go=async()=>{
-    if(busy)return;setBusy(true);
-    const ok=await verifyPassword(user,pw);
-    setBusy(false);
-    if(ok)onUnlock();else{setErr("パスワードが違います。もう一度入力してください。");setPw("");}
-  };
-  return e("div",{style:{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"60vh"}},
-    e("div",{style:{background:"white",borderRadius:20,padding:32,width:360,maxWidth:"95vw",boxShadow:"0 2px 12px rgba(0,0,0,.07)"}},
-      e("div",{style:{fontWeight:700,fontSize:17,color:"#1e3a5f",marginBottom:4,textAlign:"center"}},user.name),
-      e("div",{style:{fontSize:12,color:"#94a3b8",marginBottom:20,textAlign:"center"}},user.department+" · "+user.store),
-      e("p",{style:{fontSize:13,color:"#64748b",fontWeight:600,marginBottom:12,textAlign:"center"}},"パスワードを入力してください"),
-      e("input",{type:showPw?"text":"password",value:pw,onChange:ev=>{setPw(ev.target.value);setErr(null);},onKeyDown:ev=>{if(ev.key==="Enter")go();},style:{width:"100%",padding:"11px 14px",border:"1.5px solid #d1d5db",borderRadius:8,fontFamily:"inherit",fontSize:15,marginBottom:8,outline:"none"},autoComplete:"current-password"}),
-      e("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#64748b",marginBottom:10,cursor:"pointer"}},
-        e("input",{type:"checkbox",checked:showPw,onChange:ev=>setShowPw(ev.target.checked)}),"パスワードを表示"
-      ),
-      err&&e("p",{style:{color:"#dc2626",fontSize:12,fontWeight:700,marginBottom:10}},err),
-      e("button",{className:"btn btn-primary",style:{width:"100%"},onClick:go,disabled:busy},busy?"確認中…":"ロック解除"),
-      e("button",{onClick:onSwitch,style:{width:"100%",marginTop:10,fontSize:12,color:"#94a3b8",background:"none",border:"none",cursor:"pointer",textDecoration:"underline",fontFamily:"inherit"}},"別のユーザーでログイン")
-    )
-  );
-}
-
 // ===== LOGIN SCREEN（ID・パスワード方式） =====
 function LoginScreen({employees,admins,onLogin,onAdminLogin}){
   const [loginId,setLoginId]=useState("");
@@ -585,7 +558,6 @@ function LoginScreen({employees,admins,onLogin,onAdminLogin}){
     const ok=emp?await verifyPassword(emp,pw):false;
     setBusy(false);
     if(!ok){setErr("IDまたはパスワードが違います");setPw("");return;}
-    savePinAuth(emp.id);
     if(emp.role==="admin"||emp.role==="superadmin")onAdminLogin(emp);
     else onLogin(emp);
   };
@@ -968,7 +940,7 @@ function ResetButton({date,onConfirm}){
 }
 
 // ===== EMPLOYEE VIEW (共通：一般・管理者両方) =====
-function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView,setPinLocked}){
+function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}){
   const isAdmin=currentUser.role==="admin"||currentUser.role==="superadmin";
   const canSeePay=currentUser.role==="admin"||currentUser.role==="superadmin";
   const isBi=currentUser.bilingual===true||BILINGUAL_IDS.includes(currentUser.id);
@@ -1007,7 +979,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     const inAdmins=(admins||[]).some(x=>x.id===currentUser.id);
     if(inAdmins)setAdmins(prev=>prev.map(x=>x.id===currentUser.id?upd:x));
     else setEmployees(prev=>prev.map(x=>x.id===currentUser.id?upd:x));
-    setCurrentUser(upd);savePinAuth(currentUser.id);showToast("パスワードを変更しました");
+    setCurrentUser(upd);showToast("パスワードを変更しました");
   };
 
   const rec=getRecord(currentUser.id,editDate);
@@ -1126,7 +1098,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     showPinChange&&e(PasswordChangeModal,{currentUser,isForced:currentUser.passHash==null,
       onCancel:()=>{
         if(currentUser.passHash==null){
-          setCurrentUser(null);setPinLocked(false);setView("login");
+          setCurrentUser(null);setView("login");
         } else {
           setShowPinChange(false);
         }
@@ -1341,14 +1313,14 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
           e("div",{style:{background:"#fff3cd",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#856404",fontWeight:600}},L("⚠ 承認待ちです","⚠ Pending Approval",isBi)),
           e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8}},
             e(ResetButton,{date:editDate,onConfirm:doReset}),
-            e("button",{className:"btn btn-primary",onClick:()=>doSave(true,true)},L("提出する","Submit",isBi))
+            e("button",{className:"btn btn-primary",onClick:()=>doSave(true,true)},L("再提出する","Resubmit",isBi))
           )
         ),
         !monthClosed&&rec.status==="rejected"&&e("div",null,
           e("div",{style:{background:"#fee2e2",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#991b1b",fontWeight:600}},L("⚠ 差戻し中です。修正して再提出してください。","⚠ Returned. Please correct and resubmit.",isBi)),
           e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8}},
             e(ResetButton,{date:editDate,onConfirm:doReset}),
-            e("button",{className:"btn btn-primary",onClick:()=>doSave(true)},L("提出する","Submit",isBi))
+            e("button",{className:"btn btn-primary",onClick:()=>doSave(true)},L("再提出する","Resubmit",isBi))
           )
         ),
         !monthClosed&&(rec.status==="draft"||!rec.status)&&e("div",{style:{display:"flex",gap:10,alignItems:"center",justifyContent:"flex-end"}},
@@ -1478,7 +1450,7 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
 }
 
 // ===== ADMIN DASHBOARD (オーナーのみ) =====
-function AdminDashboard({employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView,setPinLocked}){
+function AdminDashboard({employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView}){
   const [tab,setTab]=useState("summary");
   const [selEmp,setSelEmp]=useState(null);
   const isSuperAdmin=currentUser?.role==="superadmin";
@@ -1490,14 +1462,14 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,selectedMonth,s
     const inAdmins=(admins||[]).some(x=>x.id===currentUser.id);
     if(inAdmins)setAdmins(prev=>prev.map(x=>x.id===currentUser.id?upd:x));
     else setEmployees(prev=>prev.map(x=>x.id===currentUser.id?upd:x));
-    setCurrentUser(upd);savePinAuth(currentUser.id);showToast("パスワードを変更しました");
+    setCurrentUser(upd);showToast("パスワードを変更しました");
   };
 
   return e("div",null,
     showPinChange&&e(PasswordChangeModal,{currentUser,isForced:currentUser?.passHash==null,
       onCancel:()=>{
         if(currentUser?.passHash==null){
-          setCurrentUser(null);setPinLocked(false);setView("login");
+          setCurrentUser(null);setView("login");
         } else {
           setShowPinChange(false);
         }
@@ -1594,7 +1566,6 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,selectedMonth,s
             const inAdmins=admins.some(x=>x.id===emp.id);
             if(inAdmins)setAdmins(prev=>prev.map(x=>x.id===emp.id?{...x,passHash:null}:x));
             else setEmployees(prev=>prev.map(x=>x.id===emp.id?{...x,passHash:null}:x));
-            try{localStorage.removeItem(`kintai_pin_auth_${emp.id}`)}catch{};
             showToast(emp.name+" のパスワードをリセットしました（初期パスワード: "+INITIAL_PASSWORD+"）");
           }
         })))
@@ -1633,17 +1604,32 @@ function App(){
       if(s){const emps=migrateAuth(loadLS("kintai_employees",INITIAL_EMPLOYEES),INITIAL_EMPLOYEES);const adms=migrateAuth(loadLS("kintai_admins",INITIAL_ADMINS),INITIAL_ADMINS);
         return emps.find(x=>x.id===s.empId)||adms.find(x=>x.id===s.empId)||null;}}catch{}return null;
   });
-  const [pinLocked,setPinLocked]=useState(()=>{try{const s=JSON.parse(localStorage.getItem("kintai_session")||"null");if(!s)return false;return Date.now()-s.ts>=PIN_SKIP_MS;}catch{}return false;});
+  // ログイン状態はログアウトするまで保持する（時間による自動ロックはしない）
   const [selectedMonth,setSelectedMonth]=useState(`${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,"0")}`);
   const [toast,setToast]=useState(null);
   // スタッフ情報のGAS同期は状態更新の外で行う（更新関数内で通信すると二重送信になるため）
   const pendingStaffSync=useRef(null);
+  const staffSyncing=useRef(false);
+  const [syncBusy,setSyncBusy]=useState(false);
   useEffect(()=>{
     if(!pendingStaffSync.current)return;
     const p=pendingStaffSync.current;
     pendingStaffSync.current=null;
-    gasPost("saveStaff",p);
+    staffSyncing.current=true;setSyncBusy(true);
+    const done=ok=>{
+      staffSyncing.current=false;setSyncBusy(false);
+      if(ok)setToast({msg:"スタッフ情報を保存しました",type:"success"});
+      else setToast({msg:"保存できませんでした。通信環境を確認して、もう一度保存してください。",type:"warning"});
+      setTimeout(()=>setToast(null),3000);
+    };
+    gasPost("saveStaff",p).then(r=>done(!!(r&&r.success!==false))).catch(()=>done(false));
   });
+  // 保存が終わる前にページを閉じようとしたら警告する（変更が消えるのを防ぐ）
+  useEffect(()=>{
+    const h=ev=>{if(staffSyncing.current){ev.preventDefault();ev.returnValue="";}};
+    window.addEventListener("beforeunload",h);
+    return ()=>window.removeEventListener("beforeunload",h);
+  },[]);
 
   // 状態更新は必ずReactの最新値(prev)を基準にする
   // （素早い連続操作でも更新が失われないようにするため）
@@ -1762,14 +1748,14 @@ function App(){
   };
 
   const handleLogin=emp=>{
-    setCurrentUser(emp);setPinLocked(false);setView("employee");
+    setCurrentUser(emp);setView("employee");
   };
   const handleAdminLogin=adm=>{
-    setCurrentUser(adm);setPinLocked(false);
+    setCurrentUser(adm);
     setView(adm.role==="superadmin"?"dashboard":"employee");
   };
   const handleBack=()=>{
-    setCurrentUser(null);setPinLocked(false);setView("login");
+    setCurrentUser(null);setView("login");
   };
 
   if(view==="login"||!currentUser)return e("div",null,
@@ -1777,7 +1763,11 @@ function App(){
     toast&&e("div",{className:`toast-center toast-center-${toast.type}`},
       e("div",{style:{fontSize:20,marginBottom:8}},toast.type==="warning"?"⚠️":"✅"),
       toast.msg
-    )
+    ),
+    // スタッフ情報を保存中の表示（閉じると変更が消えるため知らせる）
+    syncBusy&&e("div",{style:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",
+      background:"#1e3a5f",color:"white",padding:"9px 18px",borderRadius:20,fontSize:13,
+      fontWeight:700,zIndex:1200,boxShadow:"0 2px 10px rgba(0,0,0,.25)"}},"保存中… そのままお待ちください")
   );
 
   return e("div",{style:{fontFamily:"'Noto Sans JP',sans-serif",minHeight:"100vh",background:"#f0f2f5"}},
@@ -1787,24 +1777,26 @@ function App(){
         currentUser.role==="superadmin"&&e("span",{style:{fontSize:11,background:"rgba(124,58,237,.6)",padding:"2px 8px",borderRadius:20}},"オーナー"),
         currentUser.role==="admin"&&e("span",{style:{fontSize:11,background:"rgba(255,255,255,.2)",padding:"2px 8px",borderRadius:20}},"管理者"),
         e("button",{style:{fontSize:12,padding:"5px 12px",background:"transparent",color:"white",border:"1px solid rgba(255,255,255,.4)",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},
-          onClick:()=>{saveLS("kintai_session",{empId:currentUser.id,role:currentUser.role,view:"login",ts:Date.now()});setCurrentUser(null);setPinLocked(false);setView("login");}},"⌂ ログアウト"),
+          onClick:()=>{saveLS("kintai_session",{empId:currentUser.id,role:currentUser.role,view:"login",ts:Date.now()});setCurrentUser(null);setView("login");}},"⌂ ログアウト"),
         // オーナーのみダッシュボードへのリンク
         view==="employee"&&currentUser.role==="superadmin"&&e("button",{style:{fontSize:12,padding:"5px 12px",background:"rgba(124,58,237,.6)",color:"white",border:"none",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},onClick:()=>setView("dashboard")},"📊 ダッシュボード"),
         view==="dashboard"&&currentUser.role==="superadmin"&&e("button",{style:{fontSize:12,padding:"5px 12px",background:"rgba(255,255,255,.2)",color:"white",border:"none",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},onClick:()=>setView("employee")},"← マイ勤怠")
       )
     ),
     e("div",{style:{maxWidth:1100,margin:"0 auto",padding:"24px 20px"}},
-      pinLocked&&currentUser?
-        e(PasswordLockScreen,{user:currentUser,onUnlock:()=>{savePinAuth(currentUser.id);saveLS("kintai_session",{empId:currentUser.id,role:currentUser.role,view,ts:Date.now()});setPinLocked(false);},onSwitch:()=>{setCurrentUser(null);setPinLocked(false);setView("login");}}):
-        e("div",null,
-          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView,setPinLocked}),
-          (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView,setPinLocked})
+      e("div",null,
+          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}),
+          (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView})
         )
     ),
     toast&&e("div",{className:`toast-center toast-center-${toast.type}`},
       e("div",{style:{fontSize:20,marginBottom:8}},toast.type==="warning"?"⚠️":"✅"),
       toast.msg
-    )
+    ),
+    // スタッフ情報を保存中の表示（閉じると変更が消えるため知らせる）
+    syncBusy&&e("div",{style:{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",
+      background:"#1e3a5f",color:"white",padding:"9px 18px",borderRadius:20,fontSize:13,
+      fontWeight:700,zIndex:1200,boxShadow:"0 2px 10px rgba(0,0,0,.25)"}},"保存中… そのままお待ちください")
   );
 }
 
