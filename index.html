@@ -43,6 +43,11 @@ body{font-family:'Noto Sans JP','Hiragino Sans',sans-serif;background:#f0f2f5;mi
 .btn-outline{background:white;color:#1e3a5f;border:2px solid #1e3a5f}.btn-outline:hover{background:#f0f4f8}
 .card{background:white;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.07);padding:20px}
 .input-field{width:100%;padding:10px 14px;border:1.5px solid #d1d5db;border-radius:8px;font-family:inherit;font-size:14px;transition:border-color .15s;outline:none;color:#1e3a5f;background:white}
+/* 日付・時刻の入力欄はブラウザごとに見た目が違うため、そろえる */
+input[type="time"],input[type="date"],input[type="month"]{
+  -webkit-appearance:none;appearance:none;box-sizing:border-box;
+  font-family:inherit;background:white;color:#1e3a5f;
+}
 .input-field:focus{border-color:#1e3a5f}
 .tab{padding:10px 14px;border:none;background:transparent;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;color:#888;border-bottom:3px solid transparent;transition:all .15s;white-space:nowrap}
 .tab.active{color:#1e3a5f;border-bottom-color:#1e3a5f}
@@ -82,6 +87,23 @@ body{font-family:'Noto Sans JP','Hiragino Sans',sans-serif;background:#f0f2f5;mi
   /* 指でタップしやすい高さを確保する */
   .btn{min-height:40px}
   input,select{min-height:42px}
+  /* iOSのSafariは日付・時刻の入力欄に独自の見た目を付けるため、
+     高さや配置がずれる。指定を打ち消して他の入力欄とそろえる */
+  input[type="time"],input[type="date"],input[type="month"]{
+    -webkit-appearance:none;appearance:none;
+    display:block;width:100%;box-sizing:border-box;
+    min-height:44px;line-height:normal;
+    padding:10px 12px;text-align:left;
+    background:white;color:#1e3a5f;
+  }
+  input[type="time"]:disabled,input[type="date"]:disabled,input[type="month"]:disabled{
+    background:#f1f5f9;color:#94a3b8;
+  }
+  /* 中の文字が縦にずれるのを防ぐ */
+  input[type="time"]::-webkit-date-and-time-value,
+  input[type="date"]::-webkit-date-and-time-value{
+    text-align:left;margin:0;
+  }
 }
 /* Android/iOSで端末の文字サイズ設定により表示が崩れるのを防ぐ */
 html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
