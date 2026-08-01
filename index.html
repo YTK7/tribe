@@ -212,9 +212,14 @@ async function verifyPassword(emp,input){
 function migrateAuth(list,initialList){
   return (list||[]).map(emp=>{
     const init=(initialList||[]).find(x=>x.id===emp.id);
+    const isMonthly=emp.payType==="monthly";
     return {...emp,
       // 旧データに副管理者が残っていれば管理者に変換（副管理者は廃止）
       role:emp.role==="subadmin"?"admin":emp.role,
+      // 給与形態に合わない金額は読み込み時に無視する
+      // （スプレッドシートに古い数字が残っていても画面には出さない）
+      hourlyWage:isMonthly?undefined:emp.hourlyWage,
+      monthlyWage:isMonthly?emp.monthlyWage:undefined,
       loginId:emp.loginId||init?.loginId||("user"+emp.id+"@tribe.jp"),
       passHash:emp.passHash!==undefined?emp.passHash:null};
   });
