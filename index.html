@@ -1605,6 +1605,9 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,selectedMonth,s
             }else{
               setEmployees(prev=>prev.map(x=>x.id===upd.id?upd:x));
             }
+            // 編集したのが自分自身なら、ログイン中の情報も更新する
+            // （更新しないと、変更前の時給などが勤怠に記録されてしまう）
+            if(currentUser&&upd.id===currentUser.id)setCurrentUser(upd);
             showToast(upd.name+" を更新しました");
           },
           onDelete:emp=>{
