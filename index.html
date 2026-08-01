@@ -120,11 +120,11 @@ const {useState,useEffect,useRef,createElement:e} = React;
 
 // ===== CONSTANTS =====
 const INITIAL_EMPLOYEES = [
-  {id:1,name:"小川 正訓",loginId:"masakunipapa@docomo.ne.jp",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:100000,department:"建設部門",store:"モノレール"},
-  {id:2,name:"黒田 高史",loginId:"kurodatakashi5162@gmail.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:100000,department:"建設部門",store:"モノレール"},
-  {id:3,name:"高木 俊輔",loginId:"softball0829@icloud.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:215000,department:"営業部門",store:"営業"},
+  {id:1,name:"小川 正訓",loginId:"masakunipapa@docomo.ne.jp",role:"employee",payType:"monthly",monthlyWage:100000,department:"建設部門",store:"モノレール"},
+  {id:2,name:"黒田 高史",loginId:"kurodatakashi5162@gmail.com",role:"employee",payType:"monthly",monthlyWage:100000,department:"建設部門",store:"モノレール"},
+  {id:3,name:"高木 俊輔",loginId:"softball0829@icloud.com",role:"employee",payType:"monthly",monthlyWage:215000,department:"営業部門",store:"営業"},
   {id:4,name:"渡辺 航",loginId:"watanabe0720ko@gmail.com",role:"employee",hourlyWage:1200,department:"飲食部門",store:"JP BAR KING"},
-  {id:5,name:"安西 泰基",loginId:"taikitan1118@gmail.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:215000,department:"営業部門",store:"営業"},
+  {id:5,name:"安西 泰基",loginId:"taikitan1118@gmail.com",role:"employee",payType:"monthly",monthlyWage:215000,department:"営業部門",store:"営業"},
   {id:6,name:"吉田 未悠",loginId:"seojun168261@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"カリッジュ児島店"},
   {id:7,name:"赤田 英哉",loginId:"hideya411@icloud.com",role:"employee",hourlyWage:1050,department:"飲食部門",store:"カリッジュ児島店"},
   {id:8,name:"水谷 なつみ",loginId:"natsumishuigu735@gmail.com",role:"employee",hourlyWage:1200,department:"飲食部門",store:"GOLF BAR KING"},
@@ -132,8 +132,8 @@ const INITIAL_EMPLOYEES = [
   {id:10,name:"酒井 うらら",loginId:"ww843j@icloud.com",role:"employee",hourlyWage:1050,department:"飲食部門",store:"カリッジュ児島店"},
   {id:11,name:"久壽米木 聡伍",loginId:"megi.sogo4@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
   {id:12,name:"木村 天翔",loginId:"ten20051014@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
-  {id:13,name:"SAWAN REYMARK ULAW",loginId:"sawanreymark8@gmail.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:182000,department:"建設部門",store:"モノレール",bilingual:true},
-  {id:14,name:"OBIDOS NINO CANEDO",loginId:"obidosnino23@gmail.com",role:"employee",hourlyWage:1000,payType:"monthly",monthlyWage:182000,department:"建設部門",store:"モノレール",bilingual:true},
+  {id:13,name:"SAWAN REYMARK ULAW",loginId:"sawanreymark8@gmail.com",role:"employee",payType:"monthly",monthlyWage:182000,department:"建設部門",store:"モノレール",bilingual:true},
+  {id:14,name:"OBIDOS NINO CANEDO",loginId:"obidosnino23@gmail.com",role:"employee",payType:"monthly",monthlyWage:182000,department:"建設部門",store:"モノレール",bilingual:true},
   {id:15,name:"浅川 友歌",loginId:"yu222.hama@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
   {id:16,name:"芝田 利成",loginId:"shibasuko@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"JP BAR KING"},
   {id:17,name:"友方 律臣",loginId:"ritu2006@softbank.ne.jp",role:"employee",hourlyWage:1100,department:"飲食部門",store:"JP BAR KING"},
@@ -144,24 +144,24 @@ const INITIAL_EMPLOYEES = [
 ];
 
 const INITIAL_ADMINS = [
-  {id:101,name:"小川 孝記",loginId:"tribekoki@yahoo.co.jp",role:"superadmin",hourlyWage:1000,payType:"monthly",monthlyWage:1200000,department:"建設部門",store:"モノレール",managedStores:["モノレール","GOLF BAR KING","JP BAR KING","Qlotho by KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","営業"]},
-  {id:102,name:"杉本 隆",loginId:"sugimoto_t@tribe-international.co.jp",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:574000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
-  {id:103,name:"西田 卓司",loginId:"tribenishida@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:420000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
-  {id:104,name:"栗原 忍武",loginId:"swell.tribe@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:420000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
-  {id:105,name:"牧 大心",loginId:"dai--.12.8@docomo.ne.jp",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:394000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
-  {id:106,name:"谷本 壮磨",loginId:"t.souma0604@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:300000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:101,name:"小川 孝記",loginId:"tribekoki@yahoo.co.jp",role:"superadmin",payType:"monthly",monthlyWage:1200000,department:"建設部門",store:"モノレール",managedStores:["モノレール","GOLF BAR KING","JP BAR KING","Qlotho by KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","営業"]},
+  {id:102,name:"杉本 隆",loginId:"sugimoto_t@tribe-international.co.jp",role:"admin",payType:"monthly",monthlyWage:574000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:103,name:"西田 卓司",loginId:"tribenishida@gmail.com",role:"admin",payType:"monthly",monthlyWage:420000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:104,name:"栗原 忍武",loginId:"swell.tribe@icloud.com",role:"admin",payType:"monthly",monthlyWage:420000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:105,name:"牧 大心",loginId:"dai--.12.8@docomo.ne.jp",role:"admin",payType:"monthly",monthlyWage:394000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:106,name:"谷本 壮磨",loginId:"t.souma0604@icloud.com",role:"admin",payType:"monthly",monthlyWage:300000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
   {id:107,name:"中村 真弓",loginId:"yutaka_fantasista0623@yahoo.co.jp",role:"superadmin",hourlyWage:1300,department:"建設部門",store:"モノレール",managedStores:["モノレール","GOLF BAR KING","JP BAR KING","Qlotho by KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","営業"]},
-  {id:108,name:"稲原 信治",loginId:"paddle.17@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:340000,department:"飲食部門",store:"GOLF BAR KING",managedStores:["GOLF BAR KING","JP BAR KING"]},
-  {id:109,name:"住岡 昇悟",loginId:"s.shogo.1327@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:400000,department:"美容院部門",store:"Qlotho by KING",managedStores:["Qlotho by KING"]},
-  {id:110,name:"小川 あかり",loginId:"0417.akari567@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:387700,department:"飲食部門",store:"カリッジュ児島店",managedStores:["カリッジュ児島店","KOJIMA FOK COFFEE"]},
-  {id:111,name:"森脇 柊斗",loginId:"yudikante241@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:280000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
-  {id:112,name:"三木 和花菜",loginId:"wakaini1030@yahoo.co.jp",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:209900,department:"飲食部門",store:"カリッジュ児島店",managedStores:["カリッジュ児島店","KOJIMA FOK COFFEE"]},
-  {id:113,name:"銀山 晴己",loginId:"gin.haru@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:260000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
-  {id:114,name:"星野 京佳",loginId:"morikyo93@icloud.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:300000,department:"美容院部門",store:"Qlotho by KING",managedStores:["Qlotho by KING"]},
-  {id:115,name:"中西 大樹",loginId:"daikin46.k99@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:300000,department:"飲食部門",store:"KYOUEN",managedStores:["KYOUEN"]},
-  {id:116,name:"守谷 龍哉",loginId:"moritatsu.toripippi@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:280000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
-  {id:117,name:"谷村 栄祐",loginId:"es210422@gmail.com",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:0,department:"飲食部門",store:"JP BAR KING",managedStores:["JP BAR KING"]},
-  {id:118,name:"田野口 凌",loginId:"ryo_shinogibar@outlook.jp",role:"admin",hourlyWage:1000,payType:"monthly",monthlyWage:0,department:"飲食部門",store:"KYOUEN",managedStores:["KYOUEN"]},
+  {id:108,name:"稲原 信治",loginId:"paddle.17@icloud.com",role:"admin",payType:"monthly",monthlyWage:340000,department:"飲食部門",store:"GOLF BAR KING",managedStores:["GOLF BAR KING","JP BAR KING"]},
+  {id:109,name:"住岡 昇悟",loginId:"s.shogo.1327@gmail.com",role:"admin",payType:"monthly",monthlyWage:400000,department:"美容院部門",store:"Qlotho by KING",managedStores:["Qlotho by KING"]},
+  {id:110,name:"小川 あかり",loginId:"0417.akari567@gmail.com",role:"admin",payType:"monthly",monthlyWage:387700,department:"飲食部門",store:"カリッジュ児島店",managedStores:["カリッジュ児島店","KOJIMA FOK COFFEE"]},
+  {id:111,name:"森脇 柊斗",loginId:"yudikante241@gmail.com",role:"admin",payType:"monthly",monthlyWage:280000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:112,name:"三木 和花菜",loginId:"wakaini1030@yahoo.co.jp",role:"admin",payType:"monthly",monthlyWage:209900,department:"飲食部門",store:"カリッジュ児島店",managedStores:["カリッジュ児島店","KOJIMA FOK COFFEE"]},
+  {id:113,name:"銀山 晴己",loginId:"gin.haru@icloud.com",role:"admin",payType:"monthly",monthlyWage:260000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:114,name:"星野 京佳",loginId:"morikyo93@icloud.com",role:"admin",payType:"monthly",monthlyWage:300000,department:"美容院部門",store:"Qlotho by KING",managedStores:["Qlotho by KING"]},
+  {id:115,name:"中西 大樹",loginId:"daikin46.k99@gmail.com",role:"admin",payType:"monthly",monthlyWage:300000,department:"飲食部門",store:"KYOUEN",managedStores:["KYOUEN"]},
+  {id:116,name:"守谷 龍哉",loginId:"moritatsu.toripippi@gmail.com",role:"admin",payType:"monthly",monthlyWage:280000,department:"建設部門",store:"モノレール",managedStores:["モノレール"]},
+  {id:117,name:"谷村 栄祐",loginId:"es210422@gmail.com",role:"admin",payType:"monthly",monthlyWage:0,department:"飲食部門",store:"JP BAR KING",managedStores:["JP BAR KING"]},
+  {id:118,name:"田野口 凌",loginId:"ryo_shinogibar@outlook.jp",role:"admin",payType:"monthly",monthlyWage:0,department:"飲食部門",store:"KYOUEN",managedStores:["KYOUEN"]},
 ];
 const ALL_STORES = ["GOLF BAR KING","JP BAR KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","イベント出店","Qlotho by KING","モノレール","営業"];
 const INACTIVE_STORES = ["架設中"];
@@ -1389,6 +1389,10 @@ function AddEmployeeForm({employees,setEmployees,admins,setAdmins,showToast}){
     const allIds=[...employees,...admins].map(x=>x.id);
     const newId=Math.max(...allIds,200)+1;
     const newEmp={...form,loginId:lid,id:newId,passHash:null,
+      // 給与形態に合わない項目は保存しない（時給制に月給が入る等を防ぐ）
+      payType:form.payType==="monthly"?"monthly":undefined,
+      hourlyWage:form.payType==="monthly"?undefined:(Number(form.hourlyWage)||0),
+      monthlyWage:form.payType==="monthly"?(Number(form.monthlyWage)||0):undefined,
       managedStores:form.role==="superadmin"?ALL_STORES.filter(s=>!INACTIVE_STORES.includes(s)):form.role!=="employee"?[form.store]:undefined,
       bilingual:form.bilingual||false
     };
@@ -1572,7 +1576,11 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,selectedMonth,s
             if(!lid){showToast("ログインIDを入力してください","warning");return;}
             const dup=[...employees,...admins].some(x=>x.id!==upd.id&&String(x.loginId||"").toLowerCase()===lid);
             if(dup){showToast("このログインIDは既に使われています","warning");return;}
-            upd={...upd,loginId:lid};
+            upd={...upd,loginId:lid,
+              // 給与形態に合わない項目は残さない
+              payType:upd.payType==="monthly"?"monthly":undefined,
+              hourlyWage:upd.payType==="monthly"?undefined:(Number(upd.hourlyWage)||0),
+              monthlyWage:upd.payType==="monthly"?(Number(upd.monthlyWage)||0):undefined};
             const wasAdmin=admins.some(x=>x.id===upd.id);
             const shouldBeAdmin=upd.role!=="employee";
             // 役割に応じた担当店舗の初期化・整理
