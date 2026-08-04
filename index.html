@@ -140,7 +140,12 @@ const INITIAL_EMPLOYEES = [
   {id:18,name:"平野 あのん",loginId:"anonpingye@gmail.com",role:"employee",hourlyWage:1050,department:"飲食部門",store:"カリッジュ児島店"},
   {id:19,name:"野原 すみれ",loginId:"sumire.nobara1116@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"GOLF BAR KING"},
   {id:20,name:"原 俊幸",loginId:"t.h-4valve-dohc-rs-turbo@ezweb.ne.jp",role:"employee",hourlyWage:1100,department:"飲食部門",store:"カリッジュ児島店"},
-  {id:21,name:"立石 羚心",loginId:"1111@1111",role:"employee",hourlyWage:1100,department:"飲食部門",store:"GOLF BAR KING"},
+  {id:21,name:"立石 羚心",loginId:"r09079795140@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"GOLF BAR KING"},
+  {id:22,name:"井上 蓮太郎",loginId:"momongapupupu0126@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"JP BAR KING"},
+  {id:23,name:"今井 梨緒奈",loginId:"riona0406imai@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
+  {id:24,name:"大橋 茜",loginId:"akane.1000@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
+  {id:25,name:"中村 栞菜",loginId:"reinaaaaaaa59@gmail.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
+  {id:26,name:"小林 彩",loginId:"aaaya18@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"KYOUEN"},
 ];
 
 const INITIAL_ADMINS = [
@@ -163,10 +168,10 @@ const INITIAL_ADMINS = [
   {id:117,name:"谷村 栄祐",loginId:"es210422@gmail.com",role:"admin",payType:"monthly",monthlyWage:0,department:"飲食部門",store:"JP BAR KING",managedStores:["JP BAR KING"]},
   {id:118,name:"田野口 凌",loginId:"ryo_shinogibar@outlook.jp",role:"admin",payType:"monthly",monthlyWage:0,department:"飲食部門",store:"KYOUEN",managedStores:["KYOUEN"]},
 ];
-const ALL_STORES = ["GOLF BAR KING","JP BAR KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","イベント出店","Qlotho by KING","モノレール","営業"];
+const ALL_STORES = ["GOLF BAR KING","JP BAR KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","イベント出店","Qlotho by KING","モノレール","土木","営業"];
 const INACTIVE_STORES = ["架設中"];
 const DEPARTMENT_STORES = {
-  "建設部門":["モノレール"],"飲食部門":["GOLF BAR KING","JP BAR KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","イベント出店"],
+  "建設部門":["モノレール","土木"],"飲食部門":["GOLF BAR KING","JP BAR KING","カリッジュ児島店","KOJIMA FOK COFFEE","KYOUEN","イベント出店"],
   "美容院部門":["Qlotho by KING"],"アパレル部門":["架設中"],"営業部門":["営業"],
 };
 const OVERTIME_THRESHOLD=8;
@@ -249,7 +254,8 @@ function gasDeleteRecord(empId,date){gasPost("deleteRecord",{empId,date});}
 // v16: 副管理者を廃止（役割は 一般／管理者／オーナー の3種類）
 // v17: 本番スタッフ37名のデータへ入れ替え
 // v18: 原・立石を追加（39名）
-const DATA_VERSION="v18";
+// v19: 新規5名を追加＋立石のIDを正式化＋店舗に土木を追加
+const DATA_VERSION="v19";
 if(localStorage.getItem("kintai_data_version")!==DATA_VERSION){
   localStorage.removeItem("kintai_employees");
   localStorage.removeItem("kintai_admins");
