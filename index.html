@@ -253,31 +253,79 @@ function migrateAuth(list,initialList){
 const GAS_URL="https://script.google.com/macros/s/AKfycbz_YZdXZ20_PIUR6hofmuJLCLX2gh-CIug7wNC3HRKHT835QpzVx70nPJHZTgb_vowh/exec";
 
 // ===== GAS通信関数 =====
-async function gasGet(action,params={}){
+// 通信の設定
+const GAS_TIMEOUT_MS=20000;   // 20秒で打ち切る（電波が悪いとき固まらないように）
+const GAS_RETRY=2;            // 失敗したらこの回数まで送り直す
+
+// 制限時間つきの通信。時間内に応答がなければ中断する
+// （古い端末で中断の仕組みが使えない場合は、そのまま通信する）
+async function fetchWithTimeout(url,opts={},ms=GAS_TIMEOUT_MS){
+  if(typeof AbortController==="undefined")return fetch(url,opts);
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),ms);
   try{
+    return await fetch(url,{...opts,signal:ctrl.signal});
+  }finally{
+    clearTimeout(timer);
+  }
+}
+// 一時的な不調で失敗することがあるため、少し待って送り直す
+async function withRetry(fn,label){
+  let last=null;
+  for(let i=0;i<=GAS_RETRY;i++){
+    try{
+      const r=await fn();
+      if(r&&r.success!==false)return r;
+      last=r;
+    }catch(e){
+      last={success:false,error:e.name==="AbortError"?"応答がありません（時間切れ）":e.message};
+    }
+    if(i<GAS_RETRY)await new Promise(res=>setTimeout(res,600*(i+1)));  // 0.6秒 → 1.2秒
+  }
+  console.error("GAS "+label+" 失敗:",last);
+  return last||{success:false,error:"通信に失敗しました"};
+}
+
+async function gasGet(action,params={}){
+  return withRetry(async()=>{
     const q=new URLSearchParams({action,...params}).toString();
-    const res=await fetch(`${GAS_URL}?${q}`);
+    const res=await fetchWithTimeout(`${GAS_URL}?${q}`);
     return await res.json();
-  }catch(e){console.error("GAS GET error:",e);return{success:false,error:e.message};}
+  },"GET "+action);
 }
 async function gasPost(action,data={}){
-  try{
-    const res=await fetch(GAS_URL,{method:"POST",body:JSON.stringify({action,...data})});
+  return withRetry(async()=>{
+    const res=await fetchWithTimeout(GAS_URL,{method:"POST",body:JSON.stringify({action,...data})});
     return await res.json();
-  }catch(e){console.error("GAS POST error:",e);return{success:false,error:e.message};}
+  },"POST "+action);
 }
 // レコード削除をGASにも通知（リセット・差戻取消でスプレッドシートと不整合にならないように）
-function gasDeleteRecord(empId,date){gasPost("deleteRecord",{empId,date});}
+function gasDeleteRecord(empId,date){
+  return gasPost("deleteRecord",{empId,date})
+    .then(r=>!!(r&&r.success!==false))
+    .catch(e=>{console.error("GAS削除エラー:",e);return false;});
+}
 // 管理者の操作を履歴として記録する（承認・差戻し・差戻し取消・月締め）
+// 履歴の記録に失敗したときに知らせるための受け口（Appから設定される）
+let onLogFailed=null;
 function logAction(by,action,targetName,targetDate,note){
-  gasPost("addLog",{log:{
+  return gasPost("addLog",{log:{
     at:new Date().toISOString(),
     by:by||"",
     action:action||"",
     targetName:targetName||"",
     targetDate:targetDate||"",
     note:note||""
-  }}).catch(e=>console.error("履歴の記録に失敗:",e));
+  }}).then(r=>{
+    const ok=!!(r&&r.success!==false);
+    // 勤怠そのものは保存できているので、操作は止めずに知らせるだけにする
+    if(!ok&&onLogFailed)onLogFailed(action);
+    return ok;
+  }).catch(e=>{
+    console.error("履歴の記録に失敗:",e);
+    if(onLogFailed)onLogFailed(action);
+    return false;
+  });
 }
 
 // スタッフ情報の構造を変更した際にバージョンを上げる（勤怠レコードは保持される）
@@ -926,11 +974,12 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   const nameOfStaff=empId=>([...employees,...(admins||[])].find(x=>x.id===empId)||{}).name||"";
   const me=currentUser?.name||"";
 
-  const approve=(empId,date)=>{
+  const approve=async(empId,date)=>{
     if(mgrClosed){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
     const rec=records[empId]?.[date];if(!rec)return;
-    // 承認者と承認日時を残す
-    saveRecord({...rec,status:"approved",approvedBy:me,approvedAt:new Date().toISOString()});
+    // 承認者と承認日時を残す。届いたことを確認してから知らせる
+    const ok=await saveRecord({...rec,status:"approved",approvedBy:me,approvedAt:new Date().toISOString()});
+    if(!ok){showToast("承認できませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
     logAction(me,"承認",nameOfStaff(empId),date,"");
     showToast("承認しました ✓");
   };
@@ -940,24 +989,30 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     if(mgrClosed){showToast("月締め済みです。月締めを解除してから差戻ししてください。","warning");return;}
     setRejectTarget({empId,date});
   };
-  const doReject=(reason)=>{
+  const doReject=async(reason)=>{
     const {empId,date}=rejectTarget;
     const existing=records[empId]?.[date];
     const emp=[...employees,...(admins||[])].find(x=>x.id===empId);
     const rec=existing||{empId,date,clockIn:"",clockOut:"",breaks:[],note:"",status:"draft",hourlyWage:emp?.hourlyWage??1000,store:emp?.store||""};
-    saveRecord({...rec,status:"rejected",
+    const ok=await saveRecord({...rec,status:"rejected",
       rejectReason:reason, rejectBy:me, rejectAt:new Date().toISOString()});
-    logAction(me,"差戻し",nameOfStaff(empId),date,reason);
     setRejectTarget(null);
+    if(!ok){showToast("差し戻せませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
+    logAction(me,"差戻し",nameOfStaff(empId),date,reason);
     showToast("差し戻しました","warning");
   };
-  const approveAll=()=>{
+  const approveAll=async()=>{
     if(mgrClosed){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
     if(!selEmp){showToast("スタッフを選択してください","warning");return;}
     const targets=selRecs.filter(r=>r.status==="submitted");
     if(targets.length===0){showToast("承認待ちのデータがありません","warning");return;}
     const at=new Date().toISOString();
-    saveRecords(targets.map(r=>({...r,status:"approved",approvedBy:me,approvedAt:at})));
+    // 全件が届いたことを確認してから知らせる
+    const res=await saveRecords(targets.map(r=>({...r,status:"approved",approvedBy:me,approvedAt:at})));
+    if(!res.allOk){
+      showToast(`${res.total}件のうち${res.ok}件しか保存できませんでした。通信環境を確認して、もう一度お試しください。`,"warning");
+      return;
+    }
     targets.forEach(r=>logAction(me,"承認",selEmp.name,r.date,"一括承認"));
     showToast(`${selEmp.name}の${targets.length}件を承認しました`);
   };
@@ -1081,21 +1136,23 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
                 )
                 :r.status==="rejected"
                   ?e("div",{style:{display:"flex",gap:6}},
-                    e("button",{className:"btn btn-warning",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{
+                    e("button",{className:"btn btn-warning",style:{fontSize:11,padding:"4px 10px"},onClick:async()=>{
                       const rec=records[r.empId]?.[r.date];
+                      let ok;
                       if(!rec||(!rec.clockIn&&!rec.clockOut)){
                         // データなしで差戻したケース→レコードを削除してデータなしに戻す（GAS側も削除）
-                        gasDeleteRecord(r.empId,r.date);
-                        setRecords(prev=>{
+                        ok=await gasDeleteRecord(r.empId,r.date);
+                        if(ok)setRecords(prev=>{
                           const empRecs={...(prev[r.empId]||{})};
                           delete empRecs[r.date];
                           return {...prev,[r.empId]:empRecs};
                         });
                       } else {
                         // データありで差戻したケース→承認待ちに戻す（差戻し理由も消す）
-                        saveRecord({...rec,status:"submitted",
+                        ok=await saveRecord({...rec,status:"submitted",
                           rejectReason:undefined,rejectBy:undefined,rejectAt:undefined});
                       }
+                      if(!ok){showToast("取り消せませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
                       logAction(me,"差戻し取消",nameOfStaff(r.empId),r.date,"");
                       showToast("差戻を取り消しました");
                     }},"差戻取消")
@@ -1126,7 +1183,7 @@ function ResetButton({date,onConfirm}){
 }
 
 // ===== EMPLOYEE VIEW (共通：一般・管理者両方) =====
-function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}){
+function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}){
   const isAdmin=currentUser.role==="admin"||currentUser.role==="superadmin";
   const canSeePay=currentUser.role==="admin"||currentUser.role==="superadmin";
   const isBi=currentUser.bilingual===true||BILINGUAL_IDS.includes(currentUser.id);
@@ -1212,7 +1269,8 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
         (rec.store||"")===selectedStore&&
         JSON.stringify(vb(rec.breaks))===JSON.stringify(vb(form.breaks))&&
         JSON.stringify(vb(rec.travelTimes))===JSON.stringify(vb(form.travelTimes));
-      if(same){showToast("内容に変更がありません","warning");return;}
+      // まだスプレッドシートに届いていない場合は、同じ内容でも送り直す
+      if(same&&rec.synced!==false){showToast("内容に変更がありません","warning");return;}
     }
     const r={...rec,...form,empId:currentUser.id,date:editDate,hourlyWage:currentUser.hourlyWage,
       // 承認済みの日は保存時も元の店舗を維持する
@@ -1265,10 +1323,14 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     else if(outBreaks.length>0)showToast("休憩時間が出勤〜退勤の範囲外です。修正してください","warning");
     else if(outTravels.length>0)showToast("移動時間が出勤〜退勤の範囲外です。修正してください","warning");
   };
-  const doReset=()=>{
-    // 提出済み等でGASに保存済みのレコードは、スプレッドシート側も削除
+  const doReset=async()=>{
+    // 提出済み等でスプレッドシートに保存済みのものは、そちらも削除する。
+    // 削除できたことを確認してから画面を消す（画面だけ消えて残るのを防ぐ）
     const existing=records[currentUser.id]?.[editDate];
-    if(existing&&existing.status&&existing.status!=="draft")gasDeleteRecord(currentUser.id,editDate);
+    if(existing&&existing.status&&existing.status!=="draft"){
+      const ok=await gasDeleteRecord(currentUser.id,editDate);
+      if(!ok){showToast("リセットできませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
+    }
     setRecords(prev=>{
       const empRecs={...(prev[currentUser.id]||{})};
       delete empRecs[editDate];
@@ -1499,10 +1561,16 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
           e("p",{style:{fontSize:12,color:"#64748b"}},L("変更が必要な場合は管理者へ直接ご連絡ください。","Please contact your manager for changes.",isBi))
         ),
         !monthClosed&&rec.status==="submitted"&&e("div",null,
-          e("div",{style:{background:"#fff3cd",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#856404",fontWeight:600}},L("⚠ 承認待ちです","⚠ Pending Approval",isBi)),
+          // まだ送れていない場合は、その旨をはっきり伝える
+          rec.synced===false
+            ? e("div",{style:{background:"#fee2e2",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#991b1b",fontWeight:600,lineHeight:1.8}},
+                L("⚠ まだ送信できていません","⚠ Not sent yet",isBi),
+                e("div",{style:{fontSize:11.5,marginTop:3}},
+                  L("管理者には届いていません。「再提出する」を押してください。","Not delivered. Please press Resubmit.",isBi)))
+            : e("div",{style:{background:"#fff3cd",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#856404",fontWeight:600}},L("⚠ 承認待ちです","⚠ Pending Approval",isBi)),
           e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8}},
             e(ResetButton,{date:editDate,onConfirm:doReset}),
-            e("button",{className:"btn btn-primary",onClick:()=>doSave(true,true)},L("再提出する","Resubmit",isBi))
+            e("button",{className:"btn btn-primary",disabled:submitting,onClick:()=>doSave(true,true)},submitting?L("送信中…","Sending…",isBi):L("再提出する","Resubmit",isBi))
           )
         ),
         !monthClosed&&rec.status==="rejected"&&e("div",null,
@@ -1517,11 +1585,11 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
           ),
           e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8}},
             e(ResetButton,{date:editDate,onConfirm:doReset}),
-            e("button",{className:"btn btn-primary",onClick:()=>doSave(true)},L("再提出する","Resubmit",isBi))
+            e("button",{className:"btn btn-primary",disabled:submitting,onClick:()=>doSave(true)},submitting?L("送信中…","Sending…",isBi):L("再提出する","Resubmit",isBi))
           )
         ),
         !monthClosed&&(rec.status==="draft"||!rec.status)&&e("div",{style:{display:"flex",gap:10,alignItems:"center",justifyContent:"flex-end"}},
-          e("button",{className:"btn btn-primary",onClick:()=>doSave(true)},L("提出する","Submit",isBi))
+          e("button",{className:"btn btn-primary",disabled:submitting,onClick:()=>doSave(true)},submitting?L("送信中…","Sending…",isBi):L("提出する","Submit",isBi))
         )
       ),
       // 月次一覧タブ
@@ -1881,6 +1949,16 @@ function App(){
     });
   };
 
+  // 起動時にスプレッドシートから読めなかったときの表示
+  const [loadFailed,setLoadFailed]=useState(null);
+  const reloadFromGAS=useRef(null);
+  const [reloading,setReloading]=useState(false);
+  const retryLoad=async()=>{
+    if(!reloadFromGAS.current)return;
+    setReloading(true);
+    await reloadFromGAS.current();
+    setReloading(false);
+  };
   // GASから初期データ取得
   useEffect(()=>{
     async function loadFromGAS(){
@@ -1912,9 +1990,20 @@ function App(){
             return merged;
           });
         }
-      }catch(e){console.error("GAS初期ロードエラー:",e);}
+        // 3つのうち1つでも読めなければ、古い情報のまま操作しないよう知らせる
+        const failed=[
+          !empRes.success&&"スタッフ",
+          !admRes.success&&"管理者",
+          !recRes.success&&"勤怠"
+        ].filter(Boolean);
+        setLoadFailed(failed.length>0?failed:null);
+      }catch(e){
+        console.error("GAS初期ロードエラー:",e);
+        setLoadFailed(["データ"]);
+      }
     }
     loadFromGAS();
+    reloadFromGAS.current=loadFromGAS;   // あとから呼び直せるようにしておく
   },[]);
   const setCurrentUser=emp=>{
     if(emp)saveLS("kintai_session",{empId:emp.id,role:emp.role,ts:Date.now()});
@@ -1922,6 +2011,11 @@ function App(){
     setCUraw(emp);
   };
   const showToast=(msg,type="success")=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
+  // 履歴の記録に失敗したら知らせる（操作自体は完了している）
+  useEffect(()=>{
+    onLogFailed=action=>showToast(`「${action}」は完了しましたが、操作履歴に記録できませんでした。`,"warning");
+    return ()=>{onLogFailed=null;};
+  },[]);
 
   useEffect(()=>{
     if(!currentUser)return;
@@ -1932,28 +2026,54 @@ function App(){
   },[currentUser,view]);
 
   const getRecord=(empId,date)=>records[empId]?.[date]||{empId,date,clockIn:"",clockOut:"",breaks:[{start:"",end:""}],status:"draft",note:"",hourlyWage:[...employees,...admins].find(x=>x.id===empId)?.hourlyWage??1000};
+  // 保存の結果（スプレッドシートに届いたか）を返す。
+  // 届いたかどうかを synced に記録し、未送信なら同じ内容でも送り直せるようにする
   const saveRecord=rec=>{
-    if(currentUser&&currentUser.role==="employee"&&rec.empId!==currentUser.id){showToast("他のユーザーのデータは編集できません","warning");return;}
-    setRecords(prev=>({...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...rec}}}));
-    // GASに非同期で保存（下書き以外）
+    if(currentUser&&currentUser.role==="employee"&&rec.empId!==currentUser.id){showToast("他のユーザーのデータは編集できません","warning");return Promise.resolve(false);}
+    const mark=ok=>setRecords(prev=>{
+      const cur=(prev[rec.empId]||{})[rec.date];
+      if(!cur)return prev;
+      return {...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...cur,synced:ok}}};
+    });
+    setRecords(prev=>({...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...rec,synced:false}}}));
     if(rec.status&&rec.status!=="draft"){
       const empName=[...employees,...admins].find(x=>x.id===rec.empId)?.name||"";
-      gasPost("saveRecord",{record:{...rec,empName}}).catch(e=>console.error("GAS保存エラー:",e));
+      return gasPost("saveRecord",{record:{...rec,empName}})
+        .then(r=>{const ok=!!(r&&r.success!==false);mark(ok);return ok;})
+        .catch(e=>{console.error("GAS保存エラー:",e);mark(false);return false;});
     }
+    mark(true);
+    return Promise.resolve(true);
   };
+  // まとめて保存する。何件届いたかを返す
   const saveRecords=recs=>{
     setRecords(prev=>{
       const next={...prev};
       recs.forEach(rec=>{next[rec.empId]={...(next[rec.empId]||{}),[rec.date]:{...rec}};});
       return next;
     });
-    // GASに非同期で一括保存（下書き以外）
-    recs.filter(r=>r.status&&r.status!=="draft").forEach(rec=>{
+    const targets=recs.filter(r=>r.status&&r.status!=="draft");
+    return Promise.all(targets.map(rec=>{
       const empName=[...employees,...admins].find(x=>x.id===rec.empId)?.name||"";
-      gasPost("saveRecord",{record:{...rec,empName}}).catch(e=>console.error("GAS保存エラー:",e));
-    });
+      return gasPost("saveRecord",{record:{...rec,empName}})
+        .then(r=>!!(r&&r.success!==false))
+        .catch(e=>{console.error("GAS保存エラー:",e);return false;});
+    })).then(results=>({
+      total:results.length,
+      ok:results.filter(Boolean).length,
+      allOk:results.every(Boolean)
+    }));
   };
-  const submitRecord=rec=>{saveRecord({...rec,status:"submitted"});showToast("提出しました");};
+  // 提出はスプレッドシートに届いたことを確認してから知らせる
+  // （端末に保存できても通信に失敗すると、管理者に届かないため）
+  const [submitting,setSubmitting]=useState(false);
+  const submitRecord=async rec=>{
+    setSubmitting(true);
+    const ok=await saveRecord({...rec,status:"submitted"});
+    setSubmitting(false);
+    if(ok)showToast("提出しました");
+    else showToast("提出できませんでした。通信環境を確認して、もう一度お試しください。","warning");
+  };
 
   const getMonthlySummary=empId=>{
     const emp=[...employees,...admins].find(x=>x.id===empId);
@@ -1985,6 +2105,16 @@ function App(){
 
   if(view==="login"||!currentUser)return e("div",null,
     e(LoginScreen,{employees,admins,onLogin:handleLogin,onAdminLogin:handleAdminLogin}),
+    // スプレッドシートから読めなかったときの警告
+    loadFailed&&e("div",{className:"no-print",style:{background:"#fee2e2",borderBottom:"2px solid #fca5a5",
+      padding:"10px 16px",fontSize:12.5,color:"#991b1b",fontWeight:700,display:"flex",
+      alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}},
+      e("span",null,"⚠ "+loadFailed.join("・")+"の情報を読み込めませんでした。表示が最新でない可能性があります。"),
+      e("button",{disabled:reloading,onClick:retryLoad,
+        style:{padding:"5px 14px",border:"1.5px solid #991b1b",borderRadius:6,background:"white",
+          color:"#991b1b",fontSize:12,fontWeight:700,cursor:reloading?"default":"pointer",fontFamily:"inherit"}},
+        reloading?"読み込み中…":"再読み込み")
+    ),
     toast&&e("div",{className:`toast-center toast-center-${toast.type}`},
       e("div",{style:{fontSize:20,marginBottom:8}},toast.type==="warning"?"⚠️":"✅"),
       toast.msg
@@ -2010,9 +2140,19 @@ function App(){
     ),
     e("div",{style:{maxWidth:1100,margin:"0 auto",padding:"24px 20px"}},
       e("div",null,
-          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}),
+          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}),
           (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView})
         )
+    ),
+    // スプレッドシートから読めなかったときの警告
+    loadFailed&&e("div",{className:"no-print",style:{background:"#fee2e2",borderBottom:"2px solid #fca5a5",
+      padding:"10px 16px",fontSize:12.5,color:"#991b1b",fontWeight:700,display:"flex",
+      alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}},
+      e("span",null,"⚠ "+loadFailed.join("・")+"の情報を読み込めませんでした。表示が最新でない可能性があります。"),
+      e("button",{disabled:reloading,onClick:retryLoad,
+        style:{padding:"5px 14px",border:"1.5px solid #991b1b",borderRadius:6,background:"white",
+          color:"#991b1b",fontSize:12,fontWeight:700,cursor:reloading?"default":"pointer",fontFamily:"inherit"}},
+        reloading?"読み込み中…":"再読み込み")
     ),
     toast&&e("div",{className:`toast-center toast-center-${toast.type}`},
       e("div",{style:{fontSize:20,marginBottom:8}},toast.type==="warning"?"⚠️":"✅"),
