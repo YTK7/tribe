@@ -1995,6 +1995,10 @@ function App(){
   const [loadFailed,setLoadFailed]=useState(null);
   const reloadFromGAS=useRef(null);
   const [reloading,setReloading]=useState(false);
+  // closedSet（月締めの状態）はReactの外側で管理しているため、
+  // GASから読み込んで更新しても、それだけでは画面が再描画されない。
+  // このカウンターを更新することで、App配下すべてを再描画させる
+  const [closesVersion,setClosesVersion]=useState(0);
   const retryLoad=async()=>{
     if(!reloadFromGAS.current)return;
     setReloading(true);
@@ -2035,6 +2039,7 @@ function App(){
         // 月締めの状態はスプレッドシートを正として反映する（全管理者で共有される）
         if(closeRes.success&&Array.isArray(closeRes.data)){
           applyClosesFromServer(closeRes.data);
+          setClosesVersion(v=>v+1);   // グローバル変数の更新をReactに気づかせる
         }
         // 3つのうち1つでも読めなければ、古い情報のまま操作しないよう知らせる
         const failed=[
@@ -2187,8 +2192,8 @@ function App(){
     ),
     e("div",{style:{maxWidth:1100,margin:"0 auto",padding:"24px 20px"}},
       e("div",null,
-          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView}),
-          (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView})
+          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,setView,closesVersion}),
+          (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView,closesVersion})
         )
     ),
     // スプレッドシートから読めなかったときの警告
