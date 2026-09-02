@@ -344,10 +344,33 @@ const DATA_VERSION="v21";
 //   バージョンが変わっても端末のスタッフ情報は消さない）
 localStorage.setItem("kintai_data_version",DATA_VERSION);
 
-// 管理者による締め承認済みフラグ
-function getAdminCloseKey(empId,month){return `kintai_admin_closed_${empId}_${month}`;}
-function isAdminClosed(empId,month){try{return localStorage.getItem(getAdminCloseKey(empId,month))==="1";}catch{return false;}}
-function setAdminClosed(empId,month){try{localStorage.setItem(getAdminCloseKey(empId,month),"1");}catch{}}
+// 管理者による月締めの状態
+// スプレッドシートの「月締め」シートを正として全端末・全管理者で共有する。
+// 通信できない一瞬の間だけ localStorage を控えとして使い、
+// GASから読み込めたら必ずそちらで上書きする。
+const closedSet=new Set();  // "empId_month" の集合。メモリ上の実体
+function closeKey(empId,month){return `${empId}_${month}`;}
+function getAdminCloseKey(empId,month){return `kintai_admin_closed_${empId}_${month}`;}  // 旧・端末限定の控え（互換のため残す）
+function isAdminClosed(empId,month){
+  if(closedSet.has(closeKey(empId,month)))return true;
+  try{return localStorage.getItem(getAdminCloseKey(empId,month))==="1";}catch{return false;}
+}
+// 画面用に即時反映しつつ、GASにも送って全員に共有する
+function setAdminClosed(empId,month,by){
+  closedSet.add(closeKey(empId,month));
+  try{localStorage.setItem(getAdminCloseKey(empId,month),"1");}catch{}
+  return gasPost("setClose",{empId,month,by:by||""}).then(r=>!!(r&&r.success!==false)).catch(()=>false);
+}
+function unsetAdminClosed(empId,month){
+  closedSet.delete(closeKey(empId,month));
+  try{localStorage.removeItem(getAdminCloseKey(empId,month));}catch{}
+  return gasPost("unsetClose",{empId,month}).then(r=>!!(r&&r.success!==false)).catch(()=>false);
+}
+// 起動時・再読み込み時にスプレッドシートの内容で上書きする
+function applyClosesFromServer(list){
+  closedSet.clear();
+  (list||[]).forEach(c=>{ if(c&&c.empId!=null&&c.month)closedSet.add(closeKey(c.empId,c.month)); });
+}
 
 // 「HH:MM」→分に変換
 function toMin(t){
@@ -928,6 +951,10 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   const managedStores=currentUser.managedStores||[currentUser.store];
   const [approvalMonth,setApprovalMonth]=useState(selectedMonth);
   const [selEmpId,setSelEmpId]=useState(null);
+  // closedSet（月締めの状態）はReactの外側にあるため、更新後に画面を
+  // 再描画させるための空のカウンター。値そのものは使わない
+  const [,forceRerender]=useState(0);
+  const bumpRerender=()=>forceRerender(n=>n+1);
 
   // IDで重複排除（employeesとadminsに同一IDが存在する場合に備える）
   const allStaffMap=new Map();
@@ -1017,7 +1044,8 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     showToast(`${selEmp.name}の${targets.length}件を承認しました`);
   };
   const [showCloseConfirm,setShowCloseConfirm]=useState(false);
-  const doMgrClose=()=>{
+  const [closing,setClosing]=useState(false);
+  const doMgrClose=async()=>{
     if(allPending.length>0){
       showToast(`承認待ちが${allPending.length}件あります。すべて承認または差戻ししてから月締めしてください。`,"warning");
       setShowCloseConfirm(false);
@@ -1030,16 +1058,30 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
       setShowCloseConfirm(false);
       return;
     }
-    targetStaff.forEach(emp=>setAdminClosed(emp.id,approvalMonth));
+    setClosing(true);
+    // 全員ぶん、スプレッドシートに届いたことを確認してから完了とする
+    const results=await Promise.all(targetStaff.map(emp=>setAdminClosed(emp.id,approvalMonth,me)));
+    setClosing(false);
+    setShowCloseConfirm(false);
+    bumpRerender();
+    if(!results.every(Boolean)){
+      showToast("月締めが一部の端末にしか反映されていない可能性があります。通信環境を確認して、もう一度お試しください。","warning");
+      return;
+    }
     logAction(me,"月締め","（対象"+targetStaff.length+"名）",approvalMonth+"（月締め）","");
     showToast(approvalMonth+"分を月締めしました");
-    setShowCloseConfirm(false);
   };
   // 月締め解除：全スタッフのフラグを外してスタッフが修正できる状態に
-  const doMgrUnclose=()=>{
-    targetStaff.forEach(emp=>{
-      try{localStorage.removeItem(getAdminCloseKey(emp.id,approvalMonth));}catch{}
-    });
+  const [unclosing,setUnclosing]=useState(false);
+  const doMgrUnclose=async()=>{
+    setUnclosing(true);
+    const results=await Promise.all(targetStaff.map(emp=>unsetAdminClosed(emp.id,approvalMonth)));
+    setUnclosing(false);
+    bumpRerender();
+    if(!results.every(Boolean)){
+      showToast("解除が一部の端末にしか反映されていない可能性があります。通信環境を確認して、もう一度お試しください。","warning");
+      return;
+    }
     logAction(me,"月締め解除","（対象"+targetStaff.length+"名）",approvalMonth+"（月締め）","");
     showToast("全員の月締めを解除しました。スタッフは修正できます。","warning");
   };
@@ -1056,13 +1098,13 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     mgrClosed
       ?e("div",{style:{background:"#d1fae5",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}},
         e("span",{style:{fontSize:14,fontWeight:700,color:"#065f46"}},"🔒 "+approvalMonth+"分 月締め済み"),
-        e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 12px"},onClick:doMgrUnclose},"月締めを解除")
+        e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 12px"},disabled:unclosing,onClick:doMgrUnclose},unclosing?"解除中…":"月締めを解除")
       )
       :showCloseConfirm
         ?e("div",{style:{background:"#fff3cd",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
           e("span",{style:{fontSize:13,fontWeight:700,color:"#1e3a5f"}},approvalMonth+"分を月締めしますか？スタッフは入力・訂正できなくなります。"),
-          e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},onClick:doMgrClose},"はい・月締めする"),
-          e("button",{className:"btn btn-outline",style:{fontSize:12,padding:"6px 16px"},onClick:()=>setShowCloseConfirm(false)},"キャンセル")
+          e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},disabled:closing,onClick:doMgrClose},closing?"送信中…":"はい・月締めする"),
+          e("button",{className:"btn btn-outline",style:{fontSize:12,padding:"6px 16px"},disabled:closing,onClick:()=>setShowCloseConfirm(false)},"キャンセル")
         )
         :e("div",{style:{background:"#f8faff",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center"}},
           e("span",{style:{fontSize:12,color:"#64748b"}},"月末に全員の承認が完了したら月締めしてください"),
@@ -1963,7 +2005,7 @@ function App(){
   useEffect(()=>{
     async function loadFromGAS(){
       try{
-        const [empRes,admRes,recRes]=await Promise.all([gasGet("getEmployees"),gasGet("getAdmins"),gasGet("getRecords")]);
+        const [empRes,admRes,recRes,closeRes]=await Promise.all([gasGet("getEmployees"),gasGet("getAdmins"),gasGet("getRecords"),gasGet("getCloses")]);
         // スプレッドシートにデータがあれば、それを正として端末側を置き換える
         if(empRes.success&&Array.isArray(empRes.data)&&empRes.data.length>0){
           const mig=migrateAuth(empRes.data,INITIAL_EMPLOYEES);
@@ -1990,11 +2032,16 @@ function App(){
             return merged;
           });
         }
+        // 月締めの状態はスプレッドシートを正として反映する（全管理者で共有される）
+        if(closeRes.success&&Array.isArray(closeRes.data)){
+          applyClosesFromServer(closeRes.data);
+        }
         // 3つのうち1つでも読めなければ、古い情報のまま操作しないよう知らせる
         const failed=[
           !empRes.success&&"スタッフ",
           !admRes.success&&"管理者",
-          !recRes.success&&"勤怠"
+          !recRes.success&&"勤怠",
+          !closeRes.success&&"月締め"
         ].filter(Boolean);
         setLoadFailed(failed.length>0?failed:null);
       }catch(e){
