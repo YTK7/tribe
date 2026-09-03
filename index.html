@@ -935,6 +935,14 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
   );
 }
 
+// 印刷帳票の「店舗」欄だけを簡易表示にするための短縮名（データそのものは変更しない）
+const STORE_ABBR_PRINT = {
+  "GOLF BAR KING": "GOLF",
+  "JP BAR KING": "JP",
+  "カリッジュ児島店": "カリッジュ",
+  "KOJIMA FOK COFFEE": "FOK",
+  "Qlotho by KING": "Qlotho"
+};
 // ===== PRINT SUMMARY =====
 function PrintSummary({summary,selectedMonth,isAdmin}){
   const {emp,days,totalWork,totalPay,workDays,
@@ -955,33 +963,36 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
     :"";
   const DOW=["日","月","火","水","木","金","土"];
 
-  // 列幅（重み）→ 1ページに収まるよう固定幅で割り当てる
-  // 列幅は合計100%になるよう配分（移動列の有無で変える）
+  // 列幅（重み）→ 1ページに収まるよう固定幅で割り当てる（合計は100でなくてもよい。下でtotalWに対する比率に変換される）
+  // 状態欄・日給欄は余白が出やすいため縮小し、実働/残業/深夜の3列は
+  // 所定勤務／通常残業／深夜勤務／深夜残業の4列に分けて表示する（2026年9月）
   const cols=showTravel?[
-    {k:"date",label:"日付",w:7.5,cls:"c-nowrap"},
-    {k:"store",label:"店舗",w:11,cls:"c-wrap"},
+    {k:"date",label:"日付",w:5.5,cls:"c-nowrap"},
+    {k:"store",label:"店舗",w:7,cls:"c-wrap"},
+    {k:"in",label:"出勤",w:5,cls:"c-nowrap"},
+    {k:"out",label:"退勤",w:5,cls:"c-nowrap"},
+    {k:"brk",label:"休憩",w:9.5,cls:"c-wrap"},
+    {k:"trv",label:"移動",w:8.5,cls:"c-wrap"},
+    {k:"note",label:"備考",w:10,cls:"c-wrap"},
+    {k:"normal",label:"所定勤務",w:6,cls:"c-nowrap"},
+    {k:"otOnly",label:"通常残業",w:6,cls:"c-nowrap"},
+    {k:"lnOnly",label:"深夜勤務",w:6,cls:"c-nowrap"},
+    {k:"lnOt",label:"深夜残業",w:6,cls:"c-nowrap"},
+    {k:"st",label:"状態",w:showPay?8:14.5,cls:"c-wrap"},
+    ...(showPay?[{k:"pay",label:"日給(円)",w:6.5,cls:"c-nowrap c-right"}]:[])
+  ]:[
+    {k:"date",label:"日付",w:6,cls:"c-nowrap"},
+    {k:"store",label:"店舗",w:7.5,cls:"c-wrap"},
     {k:"in",label:"出勤",w:5.5,cls:"c-nowrap"},
     {k:"out",label:"退勤",w:5.5,cls:"c-nowrap"},
-    {k:"brk",label:"休憩",w:11.5,cls:"c-wrap"},
-    {k:"trv",label:"移動",w:10.5,cls:"c-wrap"},
-    {k:"note",label:"備考",w:9.5,cls:"c-wrap"},
-    {k:"work",label:"実働",w:6,cls:"c-nowrap"},
-    {k:"ot",label:"残業",w:6,cls:"c-nowrap"},
-    {k:"ln",label:"深夜",w:6,cls:"c-nowrap"},
-    {k:"st",label:"状態",w:showPay?12.5:21,cls:"c-wrap"},
-    ...(showPay?[{k:"pay",label:"日給(円)",w:8.5,cls:"c-nowrap c-right"}]:[])
-  ]:[
-    {k:"date",label:"日付",w:8.5,cls:"c-nowrap"},
-    {k:"store",label:"店舗",w:13,cls:"c-wrap"},
-    {k:"in",label:"出勤",w:6,cls:"c-nowrap"},
-    {k:"out",label:"退勤",w:6,cls:"c-nowrap"},
-    {k:"brk",label:"休憩",w:13,cls:"c-wrap"},
-    {k:"note",label:"備考",w:12,cls:"c-wrap"},
-    {k:"work",label:"実働",w:6.5,cls:"c-nowrap"},
-    {k:"ot",label:"残業",w:6.5,cls:"c-nowrap"},
-    {k:"ln",label:"深夜",w:6.5,cls:"c-nowrap"},
-    {k:"st",label:"状態",w:showPay?13:22,cls:"c-wrap"},
-    ...(showPay?[{k:"pay",label:"日給(円)",w:9,cls:"c-nowrap c-right"}]:[])
+    {k:"brk",label:"休憩",w:10.5,cls:"c-wrap"},
+    {k:"note",label:"備考",w:11,cls:"c-wrap"},
+    {k:"normal",label:"所定勤務",w:6.5,cls:"c-nowrap"},
+    {k:"otOnly",label:"通常残業",w:6.5,cls:"c-nowrap"},
+    {k:"lnOnly",label:"深夜勤務",w:6.5,cls:"c-nowrap"},
+    {k:"lnOt",label:"深夜残業",w:6.5,cls:"c-nowrap"},
+    {k:"st",label:"状態",w:showPay?8.5:15.5,cls:"c-wrap"},
+    ...(showPay?[{k:"pay",label:"日給(円)",w:7,cls:"c-nowrap c-right"}]:[])
   ];
   const totalW=cols.reduce((s,c)=>s+c.w,0);
 
@@ -1008,15 +1019,16 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
         const isWeekend=dowIdx===0||dowIdx===6;
         return e("tr",{key:i,className:isWeekend?"row-weekend":""},
           e("td",{className:"c-nowrap"},dateLabel),
-          e("td",{className:"c-wrap"},r?.store||"—"),
+          e("td",{className:"c-wrap"},r?.store?(STORE_ABBR_PRINT[r.store]||r.store):"—"),
           e("td",{className:"c-nowrap"},r?.clockIn||"—"),
           e("td",{className:"c-nowrap"},r?.clockOut||"—"),
           e("td",{className:"c-wrap"},breakStr),
           ...(showTravel?[e("td",{key:"tv",className:"c-wrap"},travelStr)]:[]),
           e("td",{className:"c-wrap"},r?.note||"—"),
-          e("td",{className:"c-nowrap"},r?mHHMM(r.workMinutes):"—"),
-          e("td",{className:"c-nowrap"},r?mHHMM(r.overtimeMinutes):"—"),
-          e("td",{className:"c-nowrap"},r?mHHMM(r.lateNightMinutes):"—"),
+          e("td",{className:"c-nowrap"},r?mHHMM(r.normalMinutes):"—"),
+          e("td",{className:"c-nowrap"},r?mHHMM(r.otOnlyMinutes):"—"),
+          e("td",{className:"c-nowrap"},r?mHHMM(r.lnOnlyMinutes):"—"),
+          e("td",{className:"c-nowrap"},r?mHHMM(r.lnOtMinutes):"—"),
           // 状態のあとに、承認した人／差し戻した人を小さく並べる
           e("td",{className:"c-wrap"},
             r?S_LABEL_S[r.status||"draft"]:"—",
@@ -1046,7 +1058,7 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
           ),
           ...(showPay?[e("td",{key:"total",className:"c-nowrap c-right",style:{verticalAlign:"top"}},
             e("div",null,"¥"+totalPay.toLocaleString()),
-            e("div",{style:{fontSize:8,fontWeight:400,color:"#666",marginTop:2}},"※内訳は端数処理の関係で数円ずれる場合あり")
+            e("div",{style:{fontSize:8,fontWeight:400,color:"#666",marginTop:2,whiteSpace:"normal",wordBreak:"break-all"}},"※内訳は端数処理の関係で数円ずれる場合あり")
           )]:[])
         )
       )
