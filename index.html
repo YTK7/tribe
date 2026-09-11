@@ -1317,6 +1317,9 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   });
 
   const mgrClosed=targetStaff.length>0&&targetStaff.every(emp=>isAdminClosed(emp.id,approvalMonth));
+  // 一部のスタッフだけ締まっている（以前の1人ずつ送る方式で、一部の通信が失敗した等）ときの検知用
+  const notClosedStaff=targetStaff.filter(emp=>!isAdminClosed(emp.id,approvalMonth));
+  const partiallyClosed=targetStaff.length>0&&notClosedStaff.length>0&&notClosedStaff.length<targetStaff.length;
 
   const nameOfStaff=empId=>([...employees,...(admins||[])].find(x=>x.id===empId)||{}).name||"";
   const me=currentUser?.name||"";
@@ -1445,9 +1448,17 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
           e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},disabled:closing,onClick:()=>setShowOwnerPwModal("close")},closing?"送信中…":"はい・月締めする"),
           e("button",{className:"btn btn-outline",style:{fontSize:12,padding:"6px 16px"},disabled:closing,onClick:()=>setShowCloseConfirm(false)},"キャンセル")
         )
-        :e("div",{style:{background:"#f8faff",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}},
-          e("span",{style:{fontSize:12,color:"#64748b"}},isOwner?"月末に全員の承認が完了したら月締めしてください":"月末に全員の承認が完了したら、オーナーが月締めを行います"),
-          isOwner&&e("button",{className:"btn btn-primary",style:{fontSize:13},onClick:()=>setShowCloseConfirm(true)},"🔒 "+approvalMonth+"分を月締め")
+        :e("div",{style:{background:partiallyClosed?"#fff3cd":"#f8faff",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}},
+          partiallyClosed
+            // 一部だけ締まっている状態（本来は起きないが、以前の方式で通信の一部が失敗した場合など）を知らせる
+            ?e("span",{style:{fontSize:12,color:"#92400e",fontWeight:700}},
+              "⚠ "+approvalMonth+"分は一部のスタッフだけ月締めされています（未締め："+notClosedStaff.length+"名："+notClosedStaff.map(x=>x.name).join("・")+"）。"+(isOwner?"「月締め」を押すと全員分がそろいます。":"オーナーに月締めをご依頼ください。"))
+            :e("span",{style:{fontSize:12,color:"#64748b"}},isOwner?"月末に全員の承認が完了したら月締めしてください":"月末に全員の承認が完了したら、オーナーが月締めを行います"),
+          e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+            isOwner&&e("button",{className:"btn btn-primary",style:{fontSize:13},onClick:()=>setShowCloseConfirm(true)},"🔒 "+approvalMonth+"分を月締め"),
+            // 一部だけ締まっているときは、いったん全員分を解除して整え直す道も用意する
+            isOwner&&partiallyClosed&&e("button",{className:"btn btn-outline",style:{fontSize:12},disabled:unclosing,onClick:()=>setShowOwnerPwModal("unclose")},unclosing?"解除中…":"全員分の月締めを解除")
+          )
         ),
     // ヘッダー
     e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:10}},
@@ -1474,7 +1485,8 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
           onClick:()=>setSelEmpId(selEmpId===emp.id?null:emp.id),
           style:{padding:"8px 14px",borderRadius:10,border:`2px solid ${selEmpId===emp.id?"#1e3a5f":"#e2e8f0"}`,background:selEmpId===emp.id?"#1e3a5f":"white",color:selEmpId===emp.id?"white":"#1e3a5f",cursor:"pointer",fontFamily:"inherit",fontWeight:600,fontSize:13,display:"flex",alignItems:"center",gap:6}},
           emp.name,
-          isEmpClosed&&!hasRejected&&e("span",{style:{fontSize:10,background:"#065f46",color:"white",padding:"1px 5px",borderRadius:8}},"月締済"),
+          // 2026年9月：以前は差戻し中の記録があると「月締済」を出さない条件になっていたが、締まっているなら必ず出す
+          isEmpClosed&&e("span",{style:{fontSize:10,background:"#065f46",color:"white",padding:"1px 5px",borderRadius:8}},"月締済"),
           pendingCount>0&&e("span",{style:{fontSize:10,background:"#fff3cd",color:"#856404",padding:"1px 5px",borderRadius:8}},pendingCount+"件"),
           rejectedCount>0&&e("span",{style:{fontSize:10,background:"#fee2e2",color:"#991b1b",padding:"1px 5px",borderRadius:8}},"差戻"+rejectedCount)
         );
