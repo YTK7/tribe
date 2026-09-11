@@ -223,6 +223,23 @@ const CONSTRUCTION_IDS=[1,2,13,14,101,102,103,104,105,106,107,111,113,116];
 function L(ja,en,isBi){return isBi?`${ja} / ${en}`:ja;}
 function loadLS(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}}
 function saveLS(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}
+// 勤怠データの端末保存（2026年9月・重さ対策）：記録が増えて端末の保存領域（およそ5MB）に入り切らないときは、
+// 直近3か月分だけを保存する。端末の保存は「次に開いたとき、スプレッドシートから読み込むまでの間の表示」に
+// 使うだけなので、古い月が端末に無くても、読み込みが終われば全期間が表示される。
+function saveRecordsLS(recs){
+  try{localStorage.setItem("kintai_records",JSON.stringify(recs));return;}catch{}
+  try{
+    const d=new Date();d.setMonth(d.getMonth()-2);
+    const from=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    const trimmed={};
+    Object.keys(recs||{}).forEach(id=>{
+      Object.entries(recs[id]||{}).forEach(([date,r])=>{
+        if(String(date)>=from||(r&&r.synced===false)){(trimmed[id]=trimmed[id]||{})[date]=r;}
+      });
+    });
+    localStorage.setItem("kintai_records",JSON.stringify(trimmed));
+  }catch{}
+}
 
 // ===== パスワード認証（SHA-256ハッシュ化して保存） =====
 async function sha256(str){
@@ -277,13 +294,27 @@ async function fetchWithTimeout(url,opts={},ms=GAS_TIMEOUT_MS){
     clearTimeout(timer);
   }
 }
+// 通信の記録（2026年9月・重さ対策）：直近の通信について「押してから返事が来るまでの時間」と
+// 「そのうちGAS側の処理にかかった時間（GASが返事に付けてくる ms）」を残す。
+// 「❓ 使い方」の「通信の記録」から見られる。遅さの原因の切り分けに使う（端末には保存しない）
+const commLog=[];
+function recordComm(label,totalMs,r,tries){
+  commLog.unshift({at:new Date(),label,totalMs,serverMs:(r&&typeof r.ms==="number")?r.ms:null,
+    ok:!!(r&&r.success!==false),refused:!!(r&&r.refused),tries});
+  if(commLog.length>30)commLog.length=30;
+}
 // 一時的な不調で失敗することがあるため、少し待って送り直す
 async function withRetry(fn,label){
   let last=null;
+  const t0=Date.now();
   for(let i=0;i<=GAS_RETRY;i++){
     try{
       const r=await fn();
-      if(r&&r.success!==false)return r;
+      if(r&&r.success!==false){recordComm(label,Date.now()-t0,r,i+1);return r;}
+      // スプレッドシート側のルールで断られた（refused）ときは、何度送っても同じなので送り直さない
+      if(r&&r.refused){recordComm(label,Date.now()-t0,r,i+1);return r;}
+      // 「不明なaction」（GASが古くてその機能を知らない）や「データが不正」も、送り直しても変わらないので即座に返す
+      if(r&&/不明なaction|データが不正/.test(String(r.error||""))){recordComm(label,Date.now()-t0,r,i+1);return r;}
       last=r;
     }catch(e){
       last={success:false,error:e.name==="AbortError"?"応答がありません（時間切れ）":e.message};
@@ -291,6 +322,7 @@ async function withRetry(fn,label){
     if(i<GAS_RETRY)await new Promise(res=>setTimeout(res,600*(i+1)));  // 0.6秒 → 1.2秒
   }
   console.error("GAS "+label+" 失敗:",last);
+  recordComm(label,Date.now()-t0,last,GAS_RETRY+1);
   return last||{success:false,error:"通信に失敗しました"};
 }
 
@@ -311,10 +343,51 @@ async function gasPost(action,data={}){
     return await res.json();
   },"POST "+action);
 }
+// ===== 読み込む勤怠データの範囲（2026年9月・追加修正⑧・重さ対策） =====
+// 通常の読み込みは「当月＋前2か月」だけにする（全期間を毎回読むと、月を追うごとに待ち時間と
+// 端末の保存量が増えていくため）。それより古い月は、画面でその月を選んだときに、その月だけ追加で読む。
+const RECORD_WINDOW_MONTHS=3;   // 当月を含めて何か月分を通常読み込みするか（当月＋前2か月＝3）
+function monthKeyOf(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;}
+function addMonths(month,n){const [y,m]=month.split("-").map(Number);const d=new Date(y,m-1+n,1);return monthKeyOf(d);}
+function baseWindow(){const to=monthKeyOf(new Date());return {from:addMonths(to,-(RECORD_WINDOW_MONTHS-1)),to};}
+// この画面で追加で読み込んだ古い月（自動更新のときも一緒に読み直す。ページを開き直すと空に戻る）
+const extraMonths=new Set();
+function inLoadedRange(month){const w=baseWindow();return (month>=w.from&&month<=w.to)||extraMonths.has(month);}
+
+// ===== 端末とスプレッドシートのズレ対策（2026年9月・追加修正⑥） =====
+// この端末で直近に書き換えた勤怠（"empId_date" → 書き換えた時刻）。
+// 読み込みの途中にこの端末で保存・削除した記録を、少し古い読み込み結果で
+// 上書き・復活・削除してしまわないようにするために使う。
+// 値は {at:書き換えた時刻, pending:GASへの送信がまだ終わっていないか}。
+// 送信が終わるまでは、読み込み結果（送信前に読んだ古い内容かもしれない）で打ち消さない。
+const localRecWrites=new Map();
+function markLocalRecWrite(empId,date,pending){localRecWrites.set(`${empId}_${date}`,{at:Date.now(),pending:!!pending});}
+// 送信が終わったら pending を外す（at は書き換えた時刻のまま。送信直後に始まる読み込みより「新しい」扱いにしないため）
+function settleLocalRecWrite(empId,date){const k=`${empId}_${date}`;const w=localRecWrites.get(k);localRecWrites.set(k,{at:w?w.at:0,pending:false});}
+function isLocalRecWriteFresh(empId,date,since){const w=localRecWrites.get(`${empId}_${date}`);return !!w&&(w.pending||w.at>=since);}
+// スプレッドシート側のルール（月締め済み・承認済みなど）で保存を断られたときの理由。
+// 「通信環境を確認して」という誤った案内ではなく、断られた本当の理由を表示するために使う
+let lastRefusal=null;
+// 断られたときに最新の状態を読み込み直すための受け口（Appから設定される）
+let onRefusalReload=null;
+function refusalText(r){
+  // GAS側の文言に「（画面を最新の状態に更新してください）」が付いている場合は外し、画面側の案内にそろえる
+  return String(r).replace(/（画面を最新の状態に更新してください）/g,"")+"（画面を最新の状態に読み込み直します）";
+}
+function failMsg(defaultMsg){
+  const r=lastRefusal;lastRefusal=null;
+  return r?refusalText(r):defaultMsg;
+}
 // レコード削除をGASにも通知（リセット・差戻取消でスプレッドシートと不整合にならないように）
-function gasDeleteRecord(empId,date){
-  return gasPost("deleteRecord",{empId,date})
-    .then(r=>!!(r&&r.success!==false))
+// log を渡すと、操作履歴も同じ通信で書く（古いGASでは無視されるので、その場合はあとから別に送る）
+function gasDeleteRecord(empId,date,log){
+  return gasPost("deleteRecord",{empId,date,log})
+    .then(r=>{
+      if(r&&r.refused){lastRefusal=r.error||null;if(onRefusalReload)onRefusalReload();return false;}
+      const ok=!!(r&&r.success!==false);
+      if(ok&&log)afterLogResult(r,log);
+      return ok;
+    })
     .catch(e=>{console.error("GAS削除エラー:",e);return false;});
 }
 // 管理者の操作を履歴として記録する（承認・差戻し・差戻し取消・月締め）
@@ -323,15 +396,25 @@ let onLogFailed=null;
 // 「今日」タブで未保存（未提出）の入力があるかどうか（EmployeeViewから更新される）。
 // 「🔄 最新の状態に更新」ボタンを押したときに、入力中の内容を誤って消さないよう確認するために使う。
 let hasUnsavedEntryFlag=false;
+function makeLog(by,action,targetName,targetDate,note){
+  return {at:new Date().toISOString(),by:by||"",action:action||"",targetName:targetName||"",targetDate:targetDate||"",note:note||""};
+}
+// 保存などと同じ通信で履歴を送ったあとの後始末：
+//  ・GASが logged を返してこない（古いGAS）→ 従来どおり別の通信で履歴を送る
+//  ・logged:false（書けなかった）→ 知らせるだけにする（本来の操作は完了している）
+function afterLogResult(r,log){
+  if(!r||r.logged===undefined){postLog(log);return;}
+  if(r.logged===false&&onLogFailed)onLogFailed(log.action);
+}
+function postLog(log){
+  return gasPost("addLog",{log}).then(r=>{
+    const ok=!!(r&&r.success!==false);
+    if(!ok&&onLogFailed)onLogFailed(log.action);
+    return ok;
+  }).catch(e=>{console.error("履歴の記録に失敗:",e);if(onLogFailed)onLogFailed(log.action);return false;});
+}
 function logAction(by,action,targetName,targetDate,note){
-  return gasPost("addLog",{log:{
-    at:new Date().toISOString(),
-    by:by||"",
-    action:action||"",
-    targetName:targetName||"",
-    targetDate:targetDate||"",
-    note:note||""
-  }}).then(r=>{
+  return gasPost("addLog",{log:makeLog(by,action,targetName,targetDate,note)}).then(r=>{
     const ok=!!(r&&r.success!==false);
     // 勤怠そのものは保存できているので、操作は止めずに知らせるだけにする
     if(!ok&&onLogFailed)onLogFailed(action);
@@ -365,27 +448,74 @@ localStorage.setItem("kintai_data_version",DATA_VERSION);
 // GASから読み込めたら必ずそちらで上書きする。
 const closedSet=new Set();  // "empId_month" の集合。メモリ上の実体
 function closeKey(empId,month){return `${empId}_${month}`;}
-function getAdminCloseKey(empId,month){return `kintai_admin_closed_${empId}_${month}`;}  // 旧・端末限定の控え（互換のため残す）
+function getAdminCloseKey(empId,month){return `kintai_admin_closed_${empId}_${month}`;}  // 端末の控え（スプレッドシートから読めないときだけ使う）
+// 2026年9月（追加修正⑥）：以前は、スプレッドシートから読み込めた後でも端末の控え（localStorage）に
+// 「締め済み」が残っていると、そちらが優先されていた。そのため「この端末で締めた後、
+// 別の端末で解除しても、この端末では締め済みのまま（キャッシュを消すまで直らない）」という不具合があった。
+// 一度でもスプレッドシートから読み込めたら、スプレッドシートの状態だけを見るようにした。
+let closesLoadedFromServer=false;
+// この端末で直近に締め・解除した記録（読み込み途中の少し古い結果で打ち消されないようにするため）
+// 値は {closed, at, pending}。pending＝GASへの送信がまだ終わっていない（終わるまで読み込み結果より優先する）
+const localCloseWrites=new Map();
 function isAdminClosed(empId,month){
   if(closedSet.has(closeKey(empId,month)))return true;
+  if(closesLoadedFromServer)return false;
   try{return localStorage.getItem(getAdminCloseKey(empId,month))==="1";}catch{return false;}
 }
 // 画面用に即時反映しつつ、GASにも送って全員に共有する
 // byId・passHashはオーナー本人確認用（GAS側でも役割・パスワードを照合する）
-function setAdminClosed(empId,month,by,byId,passHash){
-  closedSet.add(closeKey(empId,month));
-  try{localStorage.setItem(getAdminCloseKey(empId,month),"1");}catch{}
-  return gasPost("setClose",{empId,month,by:by||"",byId,passHash}).then(r=>!!(r&&r.success!==false)).catch(()=>false);
+// 2026年9月（追加修正⑥）：GASに断られた・届かなかったときは、画面の表示を元に戻す
+// （以前は失敗しても画面上は「締め済み」のまま残っていた）
+// 2026年9月（重さ対策）：対象スタッフ全員分を1回の通信で送る（setCloseBatch／unsetCloseBatch）。
+// 以前は1人ずつ送っていたため、45名なら45回の通信になり、月締めに長い時間がかかっていた。
+// 古いGAS（まとめて処理に未対応）のときは、従来どおり1人ずつ送る。
+// 画面には先に反映し、GASに断られた・届かなかったときは元に戻す。
+async function setAdminClosedMany(empIds,month,by,byId,passHash,log){
+  return applyCloseMany(true,empIds,month,{by:by||"",byId,passHash,log});
 }
-function unsetAdminClosed(empId,month,byId,passHash){
-  closedSet.delete(closeKey(empId,month));
-  try{localStorage.removeItem(getAdminCloseKey(empId,month));}catch{}
-  return gasPost("unsetClose",{empId,month,byId,passHash}).then(r=>!!(r&&r.success!==false)).catch(()=>false);
+async function unsetAdminClosedMany(empIds,month,byId,passHash,log){
+  return applyCloseMany(false,empIds,month,{byId,passHash,log});
+}
+async function applyCloseMany(closed,empIds,month,body){
+  const keys=empIds.map(id=>closeKey(id,month));
+  const before=keys.map(k=>closedSet.has(k));
+  keys.forEach(k=>{ if(closed)closedSet.add(k); else closedSet.delete(k); localCloseWrites.set(k,{closed,at:Date.now(),pending:true}); });
+  let ok=false,r=null;
+  try{
+    r=await gasPost(closed?"setCloseBatch":"unsetCloseBatch",{empIds,month,...body});
+    if(r&&r.success===false&&!r.refused&&/不明なaction/.test(String(r.error||""))){
+      // 古いGAS：1人ずつ送る（履歴も別の通信で送る）
+      const rs=await Promise.all(empIds.map(id=>gasPost(closed?"setClose":"unsetClose",closed?{empId:id,month,by:body.by,byId:body.byId,passHash:body.passHash}:{empId:id,month,byId:body.byId,passHash:body.passHash}).then(x=>!!(x&&x.success!==false)).catch(()=>false)));
+      ok=rs.every(Boolean);
+      if(ok&&body.log)postLog(body.log);
+    }else{
+      ok=!!(r&&r.success!==false);
+      if(r&&r.refused)lastRefusal=r.error||null;
+      if(ok&&body.log)afterLogResult(r,body.log);
+    }
+  }catch(e){ok=false;}
+  keys.forEach((k,i)=>{
+    if(ok){const w=localCloseWrites.get(k);localCloseWrites.set(k,{closed,at:w?w.at:0,pending:false});try{ if(closed)localStorage.setItem("kintai_admin_closed_"+k,"1"); else localStorage.removeItem("kintai_admin_closed_"+k); }catch{}}
+    else{ if(before[i])closedSet.add(k); else closedSet.delete(k); localCloseWrites.delete(k); }
+  });
+  return ok;
 }
 // 起動時・再読み込み時にスプレッドシートの内容で上書きする
-function applyClosesFromServer(list){
+// loadStartedAt：その読み込みを始めた時刻。読み込み中にこの端末で締め・解除した分だけは端末側を優先する
+function applyClosesFromServer(list,loadStartedAt){
+  const next=new Set();
+  (list||[]).forEach(c=>{ if(c&&c.empId!=null&&c.month)next.add(closeKey(c.empId,c.month)); });
+  localCloseWrites.forEach((w,k)=>{ if(w.pending||w.at>=(loadStartedAt||0)){ if(w.closed)next.add(k); else next.delete(k); } });
   closedSet.clear();
-  (list||[]).forEach(c=>{ if(c&&c.empId!=null&&c.month)closedSet.add(closeKey(c.empId,c.month)); });
+  next.forEach(k=>closedSet.add(k));
+  closesLoadedFromServer=true;
+  // 端末の控えも「最後にスプレッドシートから読めた状態」にそろえる（食い違いが残らないように）
+  try{
+    const old=[];
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.indexOf("kintai_admin_closed_")===0)old.push(k);}
+    old.forEach(k=>localStorage.removeItem(k));
+    closedSet.forEach(k=>localStorage.setItem("kintai_admin_closed_"+k,"1"));
+  }catch{}
 }
 
 // 「HH:MM」→分に変換
@@ -738,6 +868,24 @@ function HelpModal({isAdmin,isOwner,onClose}){
     )
   );
 
+  // 通信の記録（2026年9月・重さ対策）：ボタンを押してから返事が来るまでの時間と、そのうちGAS側の処理時間。
+  // 「重い」と感じたときに、どこで時間がかかっているかを豊様がそのまま報告できるようにするための画面
+  const commLogView=e("div",null,
+    h("🔧","通信の記録（この画面を開いてからの直近30件）"),
+    p("各行は「ボタンを押してから返事が来るまでの時間」です。カッコ内はそのうちスプレッドシート側（GAS）の処理にかかった時間で、差が大きいときは通信や起動の待ち時間が主な原因です。"),
+    commLog.length===0
+      ?p("まだ記録がありません。")
+      :e("table",{className:"table",style:{fontSize:12}},
+        e("thead",null,e("tr",null,["時刻","内容","かかった時間","結果"].map(x=>e("th",{key:x},x)))),
+        e("tbody",null,...commLog.map((c,i)=>e("tr",{key:i},
+          e("td",null,c.at.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit",second:"2-digit"})),
+          e("td",null,c.label.replace(/^GET |^POST /,"")),
+          e("td",null,(c.totalMs/1000).toFixed(1)+"秒"+(c.serverMs!=null?"（GAS "+(c.serverMs/1000).toFixed(1)+"秒）":"")+(c.tries>1?"・"+c.tries+"回目で成功":"")),
+          e("td",null,c.ok?"OK":c.refused?"ルールで拒否":"失敗")
+        )))
+      ),
+    box("info","目安：1回の通信は通常1〜3秒です。5秒以上が続く場合や、「失敗」が多い場合は、この画面の内容をそのままClaudeに伝えてください。")
+  );
   return e("div",{onClick:onClose,style:{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",
     zIndex:900,display:"flex",alignItems:"flex-end",justifyContent:"center"}},
     e("div",{onClick:ev=>ev.stopPropagation(),style:{background:"white",borderRadius:"18px 18px 0 0",
@@ -748,15 +896,15 @@ function HelpModal({isAdmin,isOwner,onClose}){
           e("button",{onClick:onClose,style:{border:"none",background:"#f1f5f9",color:"#475569",
             width:30,height:30,borderRadius:"50%",fontSize:15,cursor:"pointer",fontFamily:"inherit"}},"✕")
         ),
-        isAdmin&&e("div",{style:{display:"flex",gap:4}},
-          ...[["basic","基本の使い方"],["admin","承認・管理"]].map(([k,l])=>
+        e("div",{style:{display:"flex",gap:4}},
+          ...[["basic","基本の使い方"],...(isAdmin?[["admin","承認・管理"]]:[]),["comm","通信の記録"]].map(([k,l])=>
             e("button",{key:k,onClick:()=>setTab(k),style:{padding:"9px 14px",border:"none",
               background:"transparent",fontFamily:"inherit",fontSize:13.5,fontWeight:700,cursor:"pointer",
               color:tab===k?"#1e3a5f":"#94a3b8",borderBottom:tab===k?"2.5px solid #1e3a5f":"2.5px solid transparent"}},l))
         )
       ),
       e("div",{style:{padding:"4px 18px 26px",overflowY:"auto",flex:1}},
-        (!isAdmin||tab==="basic")?basic:adminGuide
+        tab==="comm"?commLogView:(!isAdmin||tab==="basic")?basic:adminGuide
       )
     )
   );
@@ -1117,9 +1265,11 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
   );
 }
 // ===== APPROVAL TAB =====
-function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord,saveRecords,selectedMonth,showToast}){
+function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord,saveRecords,selectedMonth,showToast,ensureMonthLoaded}){
   const managedStores=currentUser.managedStores||[currentUser.store];
   const [approvalMonth,setApprovalMonth]=useState(selectedMonth);
+  // 古い月を選んだら、その月の勤怠を追加で読む（通常は当月＋前2か月しか読んでいないため）
+  useEffect(()=>{ if(ensureMonthLoaded)ensureMonthLoaded(approvalMonth); },[approvalMonth]);
   const [selEmpId,setSelEmpId]=useState(null);
   // closedSet（月締めの状態）はReactの外側にあるため、更新後に画面を
   // 再描画させるための空のカウンター。値そのものは使わない
@@ -1171,13 +1321,13 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   const nameOfStaff=empId=>([...employees,...(admins||[])].find(x=>x.id===empId)||{}).name||"";
   const me=currentUser?.name||"";
 
+  // 2026年9月（重さ対策）：操作履歴は保存と同じ通信で送る（以前は保存→履歴の2回通信していた）
   const approve=async(empId,date)=>{
     if(mgrClosed){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
     const rec=records[empId]?.[date];if(!rec)return;
     // 承認者と承認日時を残す。届いたことを確認してから知らせる
-    const ok=await saveRecord({...rec,status:"approved",approvedBy:me,approvedAt:new Date().toISOString()});
-    if(!ok){showToast("承認できませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
-    logAction(me,"承認",nameOfStaff(empId),date,"");
+    const ok=await saveRecord({...rec,status:"approved",approvedBy:me,approvedAt:new Date().toISOString()},makeLog(me,"承認",nameOfStaff(empId),date,""));
+    if(!ok){showToast(failMsg("承認できませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
     showToast("承認しました ✓");
   };
   // 差戻しは理由の入力が必須。まず理由を聞いてから実行する
@@ -1192,10 +1342,9 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     const emp=[...employees,...(admins||[])].find(x=>x.id===empId);
     const rec=existing||{empId,date,clockIn:"",clockOut:"",breaks:[],note:"",status:"draft",hourlyWage:emp?.hourlyWage??1000,store:emp?.store||""};
     const ok=await saveRecord({...rec,status:"rejected",
-      rejectReason:reason, rejectBy:me, rejectAt:new Date().toISOString()});
+      rejectReason:reason, rejectBy:me, rejectAt:new Date().toISOString()},makeLog(me,"差戻し",nameOfStaff(empId),date,reason));
     setRejectTarget(null);
-    if(!ok){showToast("差し戻せませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
-    logAction(me,"差戻し",nameOfStaff(empId),date,reason);
+    if(!ok){showToast(failMsg("差し戻せませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
     showToast("差し戻しました","warning");
   };
   const approveAll=async()=>{
@@ -1204,13 +1353,16 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     const targets=selRecs.filter(r=>r.status==="submitted");
     if(targets.length===0){showToast("承認待ちのデータがありません","warning");return;}
     const at=new Date().toISOString();
-    // 全件が届いたことを確認してから知らせる
-    const res=await saveRecords(targets.map(r=>({...r,status:"approved",approvedBy:me,approvedAt:at})));
+    // 全件が届いたことを確認してから知らせる（1回の通信でまとめて送る。履歴も同じ通信で書く）
+    const res=await saveRecords(targets.map(r=>({...r,status:"approved",approvedBy:me,approvedAt:at})),
+      targets.map(r=>makeLog(me,"承認",selEmp.name,r.date,"一括承認")));
     if(!res.allOk){
-      showToast(`${res.total}件のうち${res.ok}件しか保存できませんでした。通信環境を確認して、もう一度お試しください。`,"warning");
+      const reason=lastRefusal;lastRefusal=null;
+      showToast(reason
+        ?`${res.total}件のうち${res.ok}件だけ承認しました。残りは次の理由で承認できませんでした：${refusalText(reason)}`
+        :`${res.total}件のうち${res.ok}件しか保存できませんでした。通信環境を確認して、もう一度お試しください。`,"warning");
       return;
     }
-    targets.forEach(r=>logAction(me,"承認",selEmp.name,r.date,"一括承認"));
     showToast(`${selEmp.name}の${targets.length}件を承認しました`);
   };
   // 月締め・解除はオーナー限定（画面側の表示制御。GAS側でも役割・パスワードを照合する）
@@ -1232,30 +1384,30 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
       return;
     }
     setClosing(true);
-    // 全員ぶん、スプレッドシートに届いたことを確認してから完了とする
-    const results=await Promise.all(targetStaff.map(emp=>setAdminClosed(emp.id,approvalMonth,me,currentUser.id,passHash)));
+    // 全員ぶん、スプレッドシートに届いたことを確認してから完了とする（1回の通信でまとめて送る）
+    const ok=await setAdminClosedMany(targetStaff.map(emp=>emp.id),approvalMonth,me,currentUser.id,passHash,
+      makeLog(me,"月締め","（対象"+targetStaff.length+"名）",approvalMonth+"（月締め）",""));
     setClosing(false);
     setShowCloseConfirm(false);
     bumpRerender();
-    if(!results.every(Boolean)){
-      showToast("月締めができませんでした。パスワードが正しいか、通信環境を確認してもう一度お試しください。","warning");
+    if(!ok){
+      showToast(failMsg("月締めができませんでした。パスワードが正しいか、通信環境を確認してもう一度お試しください。"),"warning");
       return;
     }
-    logAction(me,"月締め","（対象"+targetStaff.length+"名）",approvalMonth+"（月締め）","");
     showToast(approvalMonth+"分を月締めしました");
   };
   // 月締め解除：全スタッフのフラグを外してスタッフが修正できる状態に
   const [unclosing,setUnclosing]=useState(false);
   const doMgrUnclose=async(passHash)=>{
     setUnclosing(true);
-    const results=await Promise.all(targetStaff.map(emp=>unsetAdminClosed(emp.id,approvalMonth,currentUser.id,passHash)));
+    const ok=await unsetAdminClosedMany(targetStaff.map(emp=>emp.id),approvalMonth,currentUser.id,passHash,
+      makeLog(me,"月締め解除","（対象"+targetStaff.length+"名）",approvalMonth+"（月締め）",""));
     setUnclosing(false);
     bumpRerender();
-    if(!results.every(Boolean)){
-      showToast("解除ができませんでした。パスワードが正しいか、通信環境を確認してもう一度お試しください。","warning");
+    if(!ok){
+      showToast(failMsg("解除ができませんでした。パスワードが正しいか、通信環境を確認してもう一度お試しください。"),"warning");
       return;
     }
-    logAction(me,"月締め解除","（対象"+targetStaff.length+"名）",approvalMonth+"（月締め）","");
     showToast("全員の月締めを解除しました。スタッフは修正できます。","warning");
   };
 
@@ -1370,7 +1522,8 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
                       let ok;
                       if(!rec||(!rec.clockIn&&!rec.clockOut)){
                         // データなしで差戻したケース→レコードを削除してデータなしに戻す（GAS側も削除）
-                        ok=await gasDeleteRecord(r.empId,r.date);
+                        ok=await gasDeleteRecord(r.empId,r.date,makeLog(me,"差戻し取消",nameOfStaff(r.empId),r.date,""));
+                        if(ok)markLocalRecWrite(r.empId,r.date);
                         if(ok)setRecords(prev=>{
                           const empRecs={...(prev[r.empId]||{})};
                           delete empRecs[r.date];
@@ -1379,10 +1532,9 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
                       } else {
                         // データありで差戻したケース→承認待ちに戻す（差戻し理由も消す）
                         ok=await saveRecord({...rec,status:"submitted",
-                          rejectReason:undefined,rejectBy:undefined,rejectAt:undefined});
+                          rejectReason:undefined,rejectBy:undefined,rejectAt:undefined},makeLog(me,"差戻し取消",nameOfStaff(r.empId),r.date,""));
                       }
-                      if(!ok){showToast("取り消せませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
-                      logAction(me,"差戻し取消",nameOfStaff(r.empId),r.date,"");
+                      if(!ok){showToast(failMsg("取り消せませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
                       showToast("差戻を取り消しました");
                     }},"差戻取消")
                   )
@@ -1411,14 +1563,23 @@ function ResetButton({date,onConfirm}){
   return e("button",{className:"btn btn-danger",style:{fontSize:13,padding:"7px 16px"},onClick:()=>setConfirming(true)},"リセット");
 }
 // ===== EMPLOYEE VIEW (共通：一般・管理者両方) =====
-function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView}){
+function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView,ensureMonthLoaded}){
   const isAdmin=currentUser.role==="admin"||currentUser.role==="superadmin";
   const canSeePay=currentUser.role==="admin"||currentUser.role==="superadmin";
   const isBi=currentUser.bilingual===true||BILINGUAL_IDS.includes(currentUser.id);
   const [editDate,setEditDate]=useState(todayStr);
+  // 「今日」の日付（2026年9月・総点検）：以前はページを開いた時点の日付を使い続けていたため、
+  // 日付をまたいで開きっぱなしにすると翌日の入力ができなかった（更新ボタンを押すまで）。1分ごとに見直す
+  const [todayNow,setTodayNow]=useState(()=>formatDate(new Date()));
+  useEffect(()=>{
+    const t=setInterval(()=>{const now=formatDate(new Date());setTodayNow(prev=>prev===now?prev:now);},60*1000);
+    return()=>clearInterval(t);
+  },[]);
   const [form,setForm]=useState({clockIn:"",clockOut:"",breaks:[{start:"",end:""}],travelTimes:[{start:"",end:""}],note:""});
   const [activeTab,setActiveTab]=useState("today");
   const [showPinChange,setShowPinChange]=useState(currentUser.passHash==null);
+  // オーナーが別の端末でパスワードをリセットした場合（読み込みで passHash が null になる）も変更を求める
+  useEffect(()=>{ if(currentUser.passHash==null)setShowPinChange(true); },[currentUser.passHash]);
   const [showHelp,setShowHelp]=useState(false);
   const [selectedStore,setSelectedStore]=useState(currentUser.store||"");
   const allStores=ALL_STORES; // 部署に関係なく全店舗から選択可能（他店舗ヘルプ勤務に対応）
@@ -1472,11 +1633,25 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   //   今まさに入力中（未提出）の内容まで消えてしまう不具合があったため、
   //   「日付を切り替えたとき」と「まだ何も入力していないとき」だけ読み込み直す方式に変更した。
   //   （入力中に裏側のデータが更新されても、提出するまでは自分の入力が優先される）
+  // 2026年9月（追加修正⑥）：上の判定（hasUnsaved＝入力欄と保存済みの記録が違う）だけでは、
+  // 「本人が入力した」のか「別の端末でリセット・差戻し等があり、記録の方が変わった」のかを区別できず、
+  // 後者でも「入力中」と誤判定して、消えたはずの古い時刻が入力欄に残り続けていた。
+  // そこで「入力欄に読み込んだ時点（＝本人がまだ手を加えていない状態）の内容」を覚えておき、
+  // 本人が手を加えたときだけ、読み込み直しを止めるようにした。
+  const formSnap=(f,store)=>JSON.stringify([f.clockIn||"",f.clockOut||"",f.note||"",store||"",
+    (f.breaks||[]).filter(x=>x.start&&x.end),(f.travelTimes||[]).filter(x=>x.start&&x.end)]);
+  const formBaseRef=useRef(null);
+  // 入力欄が保存済みの記録と一致している間は、その内容を「手を加えていない状態」として覚え直す
+  useEffect(()=>{ if(!hasUnsaved)formBaseRef.current=formSnap(form,selectedStore); });
+  // 日付欄で古い月の日を選んだら、その月の勤怠を追加で読む
+  useEffect(()=>{ if(ensureMonthLoaded)ensureMonthLoaded(String(editDate).substring(0,7)); },[editDate]);
   const prevEditDateRef=useRef(editDate);
   useEffect(()=>{
     const dateChanged=editDate!==prevEditDateRef.current;
     prevEditDateRef.current=editDate;
-    if(!dateChanged&&hasUnsaved)return;
+    const userEdited=formBaseRef.current!=null&&formSnap(form,selectedStore)!==formBaseRef.current;
+    // 本人が入力中で、まだ提出できる状態なら、入力内容を優先して読み込み直さない
+    if(!dateChanged&&userEdited&&canEdit)return;
     const r=getRecord(currentUser.id,editDate);
     const eb=r.breaks&&r.breaks.length?r.breaks:[{start:"",end:""}];
     const et=r.travelTimes&&r.travelTimes.length?r.travelTimes:[{start:"",end:""}];
@@ -1573,8 +1748,9 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     const existing=records[currentUser.id]?.[editDate];
     if(existing&&existing.status&&existing.status!=="draft"){
       const ok=await gasDeleteRecord(currentUser.id,editDate);
-      if(!ok){showToast("リセットできませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
+      if(!ok){showToast(failMsg("リセットできませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
     }
+    markLocalRecWrite(currentUser.id,editDate);
     setRecords(prev=>{
       const empRecs={...(prev[currentUser.id]||{})};
       delete empRecs[editDate];
@@ -1584,7 +1760,11 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     setSelectedStore(currentUser.store||"");
     showToast(editDate+"のデータをリセットしました");
   };
-  const rejectedDates=Object.values(records[currentUser.id]||{}).filter(r=>r.status==="rejected"&&r.date?.startsWith(selectedMonth)).map(r=>r.date).sort().reverse();
+  // 差戻し中の日の知らせ。2026年9月（総点検）：以前は「今選んでいる月」の分しか出なかったため、
+  // 月が替わってから先月分を差し戻されると本人が気づけなかった。月締め済みの月を除き、全期間を対象にする
+  const rejectedDates=Object.values(records[currentUser.id]||{})
+    .filter(r=>r.status==="rejected"&&r.date&&!isAdminClosed(currentUser.id,String(r.date).substring(0,7)))
+    .map(r=>r.date).sort().reverse();
 
   const tabs=[[("today"),L("📅 日次入力","📅 Daily Input",isBi)],[("monthly"),L("📊 月次一覧","📊 Monthly",isBi)]];
   if(isAdmin)tabs.push([("approval"),L("✅ 承認管理","✅ Approval",isBi)]);
@@ -1662,8 +1842,8 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
           ),
           e("div",{style:{display:"flex",alignItems:"center",gap:8}},
             e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()-1);changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"−"),
-            e("input",{type:"date",value:editDate,onChange:ev=>changeDate(ev.target.value),className:"input-field",style:{flex:"1 1 auto",minWidth:0},max:todayStr}),
-            e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()+1);if(formatDate(d)<=todayStr)changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"＋")
+            e("input",{type:"date",value:editDate,onChange:ev=>changeDate(ev.target.value),className:"input-field",style:{flex:"1 1 auto",minWidth:0},max:todayNow}),
+            e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()+1);if(formatDate(d)<=todayNow)changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"＋")
           )
         ),
         // 出退勤
@@ -1844,7 +2024,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
       // 月次一覧タブ
       activeTab==="monthly"&&e(MonthlyTable,{summary,currentUser,selectedMonth,isMgrClosed:isAdminClosed(currentUser.id,selectedMonth)}),
       // 承認管理タブ（管理者のみ）
-      activeTab==="approval"&&isAdmin&&e(ApprovalTab,{currentUser,employees,admins,records,setRecords,saveRecord,saveRecords,selectedMonth,showToast})
+      activeTab==="approval"&&isAdmin&&e(ApprovalTab,{currentUser,employees,admins,records,setRecords,saveRecord,saveRecords,selectedMonth,showToast,ensureMonthLoaded})
     ),
     e("div",{style:{marginTop:16},className:"no-print"},e("button",{className:"btn btn-outline",onClick:()=>window.print()},L("🖨 月次集計を印刷","🖨 Print Monthly",isBi))),
     e(PrintSummary,{summary,selectedMonth,isAdmin:canSeePay})
@@ -1972,6 +2152,7 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
   const [selEmp,setSelEmp]=useState(null);
   const isSuperAdmin=currentUser?.role==="superadmin";
   const [showPinChange,setShowPinChange]=useState(currentUser?.passHash==null);
+  useEffect(()=>{ if(currentUser&&currentUser.passHash==null)setShowPinChange(true); },[currentUser?.passHash]);
   const [showHelp,setShowHelp]=useState(false);
 
   const savePassToList=hash=>{
@@ -2154,6 +2335,9 @@ function App(){
         return emps.find(x=>x.id===s.empId)||adms.find(x=>x.id===s.empId)||null;}}catch{}return null;
   });
   // ログイン状態はログアウトするまで保持する（時間による自動ロックはしない）
+  // 読み込み処理（useEffect内）から「今ログインしている人」「今の画面」を参照するための控え
+  const currentUserRef=useRef(currentUser);currentUserRef.current=currentUser;
+  const viewRef=useRef(view);viewRef.current=view;
   const [selectedMonth,setSelectedMonth]=useState(`${TODAY.getFullYear()}-${String(TODAY.getMonth()+1).padStart(2,"0")}`);
   const [toast,setToast]=useState(null);
   // スタッフ情報のGAS同期は状態更新の外で行う（更新関数内で通信すると二重送信になるため）
@@ -2163,7 +2347,9 @@ function App(){
   // 変更があった「その人の分だけ」を保存する方式（saveOneStaff/deleteStaff）に変更し、
   // 溜めておいた操作を配列でまとめて送る（1回のレンダーで複数箇所が変更されても取りこぼさないように）
   const pendingStaffOps=useRef([]);
-  const queueStaffOp=op=>{pendingStaffOps.current=[...pendingStaffOps.current,op];};
+  // この端末でスタッフ情報を最後に変更した時刻（読み込み途中の少し古い一覧で、変更直後の内容を上書きしないため）
+  const lastStaffWriteAt=useRef(0);
+  const queueStaffOp=op=>{pendingStaffOps.current=[...pendingStaffOps.current,op];lastStaffWriteAt.current=Date.now();};
   const staffSyncing=useRef(false);
   const [syncBusy,setSyncBusy]=useState(false);
   useEffect(()=>{
@@ -2219,7 +2405,7 @@ function App(){
   const setRecords=v=>{
     setRecRaw(prev=>{
       const nx=typeof v==="function"?v(prev):v;
-      saveLS("kintai_records",nx);
+      saveRecordsLS(nx);
       return nx;
     });
   };
@@ -2240,39 +2426,153 @@ function App(){
     await reloadFromGAS.current();
     setReloading(false);
   };
+  // スプレッドシートから読んだ勤怠（範囲付き）を、端末側の記録とそろえる。
+  // recRes … getRecords の返事。range が付いていれば「その範囲だけ読んだ」返事（新しいGAS）。
+  //          付いていなければ全件（古いGAS）として扱う。
+  // 端末にだけある記録は、次のものだけを残し、それ以外は消す：
+  //   ① まだ送信できていない記録（synced:false。再提出できるように残す。ただし月締め済みの月は除く）
+  //   ② この読み込みの途中に、この端末で保存した記録
+  //   ③ 今回読んでいない範囲の月で、この画面で追加読み込み済みの月（extraMonths）の記録
+  // 読んでいない範囲の古い月の記録（以前の端末保存に残っていたもの）は消す（必要になればその月を選んだときに読み直す）
+  const mergeServerRecords=(recRes,loadStartedAt,serverClosed)=>{
+    const range=recRes.range;
+    const inRange=range
+      ?m=>((range.from&&range.to&&m>=range.from&&m<=range.to)||(range.months||[]).includes(m))
+      :()=>true;
+    // シートそのものが空（total が 0）のときだけは、念のため端末側の記録を消さない（シート名の変更等の事故に備える）
+    const serverEmpty=typeof recRes.total==="number"?recRes.total===0:recRes.data.length===0;
+    setRecRaw(prev=>{
+      const isRecentLocal=(id,date)=>isLocalRecWriteFresh(id,date,loadStartedAt);
+      const next={};
+      const put=(id,date,r)=>{next[id]={...(next[id]||{}),[date]:r};};
+      const seen=new Set();
+      recRes.data.forEach(sr=>{
+        if(!sr||sr.empId==null||!sr.date)return;
+        const id=Number(sr.empId);
+        if(!Number.isFinite(id))return;
+        seen.add(id+"_"+sr.date);
+        if(isRecentLocal(id,sr.date)){
+          // 読み込み中にこの端末で書き換えた（または削除した）→端末側を優先する
+          const loc=(prev[id]||{})[sr.date];
+          if(loc)put(id,sr.date,loc);
+          return;
+        }
+        put(id,sr.date,{...sr,empId:id});
+      });
+      Object.keys(prev).forEach(idKey=>{
+        const id=Number(idKey);
+        Object.entries(prev[idKey]||{}).forEach(([date,loc])=>{
+          if(!loc||seen.has(id+"_"+date))return;
+          const month=String(date).substring(0,7);
+          const unsent=loc.synced===false&&!(serverClosed&&serverClosed.has(closeKey(id,month)));
+          if(unsent||isRecentLocal(id,date)){put(id,date,loc);return;}
+          if(!inRange(month)){
+            // 今回読んでいない月：通常の読み込み範囲（当月＋前2か月）か、追加読み込み済みの月ならそのまま残す。
+            // それ以外（以前の端末保存に残っていた古い月）は消す
+            if(inLoadedRange(month))put(id,date,loc);
+            return;
+          }
+          if(serverEmpty)put(id,date,loc);
+        });
+      });
+      saveRecordsLS(next);
+      return next;
+    });
+  };
+  // 古い月（通常の読み込み範囲の外）を選んだときに、その月だけ追加で読む
+  // monthLoad：{month,status:"loading"|"failed"}（画面上部の小さな表示に使う）
+  const [monthLoad,setMonthLoad]=useState(null);
+  const loadingMonths=useRef(new Set());
+  const ensureMonthLoaded=async(month,force)=>{
+    if(!month||!/^\d{4}-\d{2}$/.test(month))return;
+    if(!force&&inLoadedRange(month))return;
+    if(loadingMonths.current.has(month))return;
+    loadingMonths.current.add(month);
+    setMonthLoad({month,status:"loading"});
+    const startedAt=Date.now();
+    try{
+      const r=await gasGet("getRecords",{months:month});
+      if(r&&r.success!==false&&Array.isArray(r.data)){
+        extraMonths.add(month);
+        // 古いGAS（範囲指定に未対応）は全件を返してくる。その場合は range が無いので全件として扱われる
+        mergeServerRecords(r,startedAt,null);
+        setMonthLoad(m=>(m&&m.month===month)?null:m);
+      }else{
+        setMonthLoad({month,status:"failed"});
+      }
+    }catch(e){
+      console.error("月の追加読み込みエラー:",e);
+      setMonthLoad({month,status:"failed"});
+    }finally{
+      loadingMonths.current.delete(month);
+    }
+  };
   // GASから初期データ取得
+  // 読み込みが重なったとき（自動更新と手動更新など）に、後から始めた新しい読み込みの結果を
+  // 先に始めた古い読み込みの結果で上書きしないよう、番号を振って管理する
+  const loadSeq=useRef(0),appliedSeq=useRef(0);
   useEffect(()=>{
     async function loadFromGAS(){
+      const mySeq=++loadSeq.current;
+      const loadStartedAt=Date.now();
       try{
-        const [empRes,admRes,recRes,closeRes]=await Promise.all([gasGet("getEmployees"),gasGet("getAdmins"),gasGet("getRecords"),gasGet("getCloses")]);
+        const win=baseWindow();
+        const recParams={from:win.from,to:win.to};
+        if(extraMonths.size)recParams.months=[...extraMonths].join(",");
+        const [empRes,admRes,recRes,closeRes]=await Promise.all([gasGet("getEmployees"),gasGet("getAdmins"),gasGet("getRecords",recParams),gasGet("getCloses")]);
+        if(mySeq<appliedSeq.current)return;   // より新しい読み込みがすでに反映済み
+        appliedSeq.current=mySeq;
         // スプレッドシートにデータがあれば、それを正として端末側を置き換える
-        if(empRes.success&&Array.isArray(empRes.data)&&empRes.data.length>0){
-          const mig=migrateAuth(empRes.data,INITIAL_EMPLOYEES);
-          saveLS("kintai_employees",mig);setEmpRaw(mig);
+        // （ただし読み込み中にこの端末でスタッフ情報を変更した場合は、今回は置き換えない＝次回の読み込みで反映）
+        const staffWrittenDuringLoad=lastStaffWriteAt.current>=loadStartedAt||staffSyncing.current;
+        let empList=null,admList=null;
+        if(!staffWrittenDuringLoad&&empRes.success&&Array.isArray(empRes.data)&&empRes.data.length>0){
+          empList=migrateAuth(empRes.data,INITIAL_EMPLOYEES);
+          saveLS("kintai_employees",empList);setEmpRaw(empList);
         }
-        if(admRes.success&&Array.isArray(admRes.data)&&admRes.data.length>0){
-          const mig=migrateAuth(admRes.data,INITIAL_ADMINS);
-          saveLS("kintai_admins",mig);setAdminsRaw(mig);
+        if(!staffWrittenDuringLoad&&admRes.success&&Array.isArray(admRes.data)&&admRes.data.length>0){
+          admList=migrateAuth(admRes.data,INITIAL_ADMINS);
+          saveLS("kintai_admins",admList);setAdminsRaw(admList);
         }
-        // 勤怠レコードもGASから取得してマージ（他端末で提出されたデータを反映）
-        // ※一時保存機能はなく「下書き」状態が端末に保存されることはないため、
-        //   以前あった「ローカルが下書きなら上書きしない」という分岐は削除済み（2026年9月）
+        // 2026年9月（追加修正⑥）：ログイン中の本人の情報も、スプレッドシートの内容に合わせる。
+        // 以前はログインした時点の情報のまま変わらなかったため、オーナーが別の端末で
+        // 担当店舗・役割（管理者→一般など）・パスワードを変更しても、ログイン中の端末では
+        // 反映されなかった（例：一般に変更された人に、承認管理タブが表示されたまま）。
+        if(empList&&admList){
+          const cur=currentUserRef.current;
+          const fresh=cur&&[...empList,...admList].find(x=>x.id===cur.id);
+          if(fresh&&JSON.stringify(fresh)!==JSON.stringify(cur)){
+            setCUraw(fresh);
+            // オーナーでなくなった人がダッシュボードを開いたままなら、マイ勤怠に切り替える
+            if(fresh.role!=="superadmin"&&viewRef.current==="dashboard")setView("employee");
+          }
+          // スプレッドシートから削除された人（退職者など）がログインしたままなら、ログアウトする
+          // （2026年9月・総点検で発見：以前は開き直しても2回目までログインが残っていた）
+          if(cur&&!fresh){
+            setCurrentUser(null);setView("login");
+            setToast({msg:"スタッフ情報が見つからないため、ログアウトしました。管理者にご確認ください。",type:"warning"});
+            setTimeout(()=>setToast(null),5000);
+          }
+        }
+        // 月締めの一覧（勤怠の整理にも使うので先に組み立てる）
+        const closesOk=closeRes.success&&Array.isArray(closeRes.data);
+        const serverClosed=new Set();
+        if(closesOk)closeRes.data.forEach(c=>{if(c&&c.empId!=null&&c.month)serverClosed.add(closeKey(c.empId,c.month));});
+        // 勤怠レコード：スプレッドシートを正として端末側をそろえる。
+        // 2026年9月（追加修正⑥）：以前は「スプレッドシートの内容を上書き・追加する」だけで、
+        // 「スプレッドシートから消えた記録を端末からも消す」処理がなかった。そのため、
+        // 別の端末でリセット（削除）された記録が、この端末では「差戻中」等のまま残り続け、
+        // キャッシュ（端末に保存されたデータ）を消すまで直らなかった。
+        // 端末にだけある記録は、次の2種類だけを残し、それ以外は「他の端末で削除された」ものとして消す。
+        //   ① まだ送信できていない記録（synced:false。再提出できるように残す）
+        //      ※ただし月締め済みの月のものは、もう送信できないため残さない
+        //   ② この読み込みの途中に、この端末で保存した記録
         if(recRes.success&&Array.isArray(recRes.data)){
-          setRecRaw(prev=>{
-            const merged={...prev};
-            recRes.data.forEach(sr=>{
-              if(!sr||sr.empId==null||!sr.date)return;
-              const id=Number(sr.empId);
-              if(!Number.isFinite(id))return;
-              merged[id]={...(merged[id]||{}),[sr.date]:{...sr,empId:id}};
-            });
-            saveLS("kintai_records",merged);
-            return merged;
-          });
+          mergeServerRecords(recRes,loadStartedAt,serverClosed);
         }
         // 月締めの状態はスプレッドシートを正として反映する（全管理者で共有される）
-        if(closeRes.success&&Array.isArray(closeRes.data)){
-          applyClosesFromServer(closeRes.data);
+        if(closesOk){
+          applyClosesFromServer(closeRes.data,loadStartedAt);
           setClosesVersion(v=>v+1);   // グローバル変数の更新をReactに気づかせる
         }
         // 3つのうち1つでも読めなければ、古い情報のまま操作しないよう知らせる
@@ -2338,41 +2638,106 @@ function App(){
   const getRecord=(empId,date)=>records[empId]?.[date]||{empId,date,clockIn:"",clockOut:"",breaks:[{start:"",end:""}],status:"draft",note:"",hourlyWage:[...employees,...admins].find(x=>x.id===empId)?.hourlyWage??1000};
   // 保存の結果（スプレッドシートに届いたか）を返す。
   // 届いたかどうかを synced に記録し、未送信なら同じ内容でも送り直せるようにする
-  const saveRecord=rec=>{
+  // 端末側の記録を、送信前の状態に戻す（スプレッドシート側に断られたとき用）
+  const revertRecord=(empId,date,before)=>setRecords(prev=>{
+    const emp={...(prev[empId]||{})};
+    if(before)emp[date]=before;else delete emp[date];
+    return {...prev,[empId]:emp};
+  });
+  // 2026年9月（追加修正⑥）：通信はできたがスプレッドシート側のルール（月締め済み・承認済み・
+  // 他の端末で内容が変わっている等）で断られた場合（GASが refused:true を付けて返す）の扱いを変更した。
+  // 以前は通信失敗と同じく「まだ送信できていません」として端末に残していたため、
+  // 何度再提出しても断られ続け、画面にも「通信環境を確認して」という誤った案内が出ていた。
+  // 断られたときは、端末の表示を送信前に戻し、断られた理由を表示し、最新の状態を読み込み直す。
+  const handleRefusal=(r,list)=>{
+    lastRefusal=(r&&r.error)||"保存できませんでした";
+    list.forEach(([empId,date,before])=>revertRecord(empId,date,before));
+    if(reloadFromGAS.current)reloadFromGAS.current();
+  };
+  useEffect(()=>{
+    onRefusalReload=()=>{if(reloadFromGAS.current)reloadFromGAS.current();};
+    return ()=>{onRefusalReload=null;};
+  },[]);
+  // log を渡すと、操作履歴も同じ通信で書く（2026年9月・重さ対策。古いGASのときは別の通信で送る）
+  const saveRecord=(rec,log)=>{
     if(currentUser&&currentUser.role==="employee"&&rec.empId!==currentUser.id){showToast("他のユーザーのデータは編集できません","warning");return Promise.resolve(false);}
+    const before=(records[rec.empId]||{})[rec.date];   // 送信前の端末側の記録
+    markLocalRecWrite(rec.empId,rec.date,true);        // 送信が終わるまで、読み込み結果で打ち消されないようにする
+    // 送信の結果を端末側に反映する。成功なら「送った内容」を届いた印つきで確定させる
+    // （送信中に自動更新が走って古い内容に置き換わっていても、送った内容に戻す）
     const mark=ok=>setRecords(prev=>{
       const cur=(prev[rec.empId]||{})[rec.date];
+      if(ok)return {...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...rec,synced:true}}};
       if(!cur)return prev;
-      return {...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...cur,synced:ok}}};
+      return {...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...cur,synced:false}}};
     });
     setRecords(prev=>({...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...rec,synced:false}}}));
     if(rec.status&&rec.status!=="draft"){
       const empName=[...employees,...admins].find(x=>x.id===rec.empId)?.name||"";
-      return gasPost("saveRecord",{record:{...rec,empName}})
-        .then(r=>{const ok=!!(r&&r.success!==false);mark(ok);return ok;})
-        .catch(e=>{console.error("GAS保存エラー:",e);mark(false);return false;});
+      return gasPost("saveRecord",{record:{...rec,empName},log})
+        .then(r=>{
+          settleLocalRecWrite(rec.empId,rec.date);
+          // ルールで断られた（refused）→元に戻して理由を表示。通信の失敗→「まだ送信できていません」として残す（従来どおり）
+          if(r&&r.refused){handleRefusal(r,[[rec.empId,rec.date,before]]);return false;}
+          const ok=!!(r&&r.success!==false);mark(ok);
+          if(ok&&log)afterLogResult(r,log);
+          return ok;
+        })
+        .catch(e=>{console.error("GAS保存エラー:",e);settleLocalRecWrite(rec.empId,rec.date);mark(false);return false;});
     }
+    settleLocalRecWrite(rec.empId,rec.date);
     mark(true);
     return Promise.resolve(true);
   };
   // まとめて保存する。何件届いたかを返す
-  const saveRecords=recs=>{
+  // 2026年9月（重さ対策）：1回の通信（saveRecordsBatch）でまとめて送る。logs は recs と同じ並びで履歴も同時に書く。
+  // 古いGAS（まとめて処理に未対応）のときは、従来どおり1件ずつ送る。
+  const saveRecords=async(recs,logs)=>{
+    const befores=new Map(recs.map(rec=>[`${rec.empId}_${rec.date}`,(records[rec.empId]||{})[rec.date]]));
+    recs.forEach(rec=>markLocalRecWrite(rec.empId,rec.date,true));
     setRecords(prev=>{
       const next={...prev};
-      recs.forEach(rec=>{next[rec.empId]={...(next[rec.empId]||{}),[rec.date]:{...rec}};});
+      recs.forEach(rec=>{next[rec.empId]={...(next[rec.empId]||{}),[rec.date]:{...rec,synced:false}};});
       return next;
     });
     const targets=recs.filter(r=>r.status&&r.status!=="draft");
-    return Promise.all(targets.map(rec=>{
-      const empName=[...employees,...admins].find(x=>x.id===rec.empId)?.name||"";
-      return gasPost("saveRecord",{record:{...rec,empName}})
-        .then(r=>!!(r&&r.success!==false))
-        .catch(e=>{console.error("GAS保存エラー:",e);return false;});
-    })).then(results=>({
+    const nameOf=id=>[...employees,...admins].find(x=>x.id===id)?.name||"";
+    const payload=targets.map(rec=>({...rec,empName:nameOf(rec.empId)}));
+    const targetLogs=logs?recs.map((rec,i)=>[rec,logs[i]]).filter(([rec])=>rec.status&&rec.status!=="draft").map(([,l])=>l):null;
+    const refused=[];let lastRefusedRes=null;
+    let results=[];
+    const finish=(rec,ok,r)=>{
+      settleLocalRecWrite(rec.empId,rec.date);
+      if(r&&r.refused){refused.push([rec.empId,rec.date,befores.get(`${rec.empId}_${rec.date}`)]);lastRefusedRes=r;return false;}
+      if(ok)setRecords(prev=>({...prev,[rec.empId]:{...(prev[rec.empId]||{}),[rec.date]:{...rec,synced:true}}}));
+      return ok;
+    };
+    try{
+      const r=targets.length?await gasPost("saveRecordsBatch",{records:payload,logs:targetLogs||undefined}):{success:true,results:[]};
+      if(r&&r.success===false&&!r.refused&&/不明なaction/.test(String(r.error||""))){
+        // 古いGAS：1件ずつ送る（履歴も別の通信で）
+        results=await Promise.all(targets.map((rec,i)=>gasPost("saveRecord",{record:payload[i]})
+          .then(x=>{const ok=finish(rec,!!(x&&x.success!==false)&&!x.refused,x);if(ok&&targetLogs&&targetLogs[i])postLog(targetLogs[i]);return ok;})
+          .catch(e=>{console.error("GAS保存エラー:",e);settleLocalRecWrite(rec.empId,rec.date);return false;})));
+      }else if(r&&r.success!==false&&Array.isArray(r.results)){
+        results=targets.map((rec,i)=>{const x=r.results[i]||{success:false};return finish(rec,!!x.success,x);});
+        if(targetLogs&&r.logged===false&&onLogFailed)onLogFailed("承認");
+      }else{
+        // 通信の失敗など：全件「まだ送信できていません」のまま残す
+        targets.forEach(rec=>settleLocalRecWrite(rec.empId,rec.date));
+        results=targets.map(()=>false);
+      }
+    }catch(e){
+      console.error("GAS保存エラー:",e);
+      targets.forEach(rec=>settleLocalRecWrite(rec.empId,rec.date));
+      results=targets.map(()=>false);
+    }
+    if(refused.length)handleRefusal(lastRefusedRes,refused);
+    return {
       total:results.length,
       ok:results.filter(Boolean).length,
       allOk:results.every(Boolean)
-    }));
+    };
   };
   // 提出はスプレッドシートに届いたことを確認してから知らせる
   // （端末に保存できても通信に失敗すると、管理者に届かないため）
@@ -2382,7 +2747,7 @@ function App(){
     const ok=await saveRecord({...rec,status:"submitted"});
     setSubmitting(false);
     if(ok)showToast("提出しました");
-    else showToast("提出できませんでした。通信環境を確認して、もう一度お試しください。","warning");
+    else showToast(failMsg("提出できませんでした。通信環境を確認して、もう一度お試しください。"),"warning");
   };
 
   const getMonthlySummary=empId=>{
@@ -2414,6 +2779,8 @@ function App(){
       totalLnOtMinutes:tLnOtM,totalLnOtPay:tLnOtP};
   };
 
+  // 月次一覧・ダッシュボードで古い月を選んだら、その月を追加で読む
+  useEffect(()=>{ if(currentUser)ensureMonthLoaded(selectedMonth); },[selectedMonth,currentUser&&currentUser.id]);
   const handleLogin=emp=>{
     setCurrentUser(emp);setView("employee");
   };
@@ -2465,9 +2832,19 @@ function App(){
         view==="dashboard"&&currentUser.role==="superadmin"&&e("button",{style:{fontSize:12,padding:"5px 12px",background:"rgba(255,255,255,.2)",color:"white",border:"none",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},onClick:()=>setView("employee")},"← マイ勤怠")
       )
     ),
+    // 古い月（通常の読み込み範囲の外）を追加で読んでいるときの表示
+    monthLoad&&e("div",{className:"no-print",style:{position:"fixed",top:64,left:"50%",transform:"translateX(-50%)",zIndex:950,
+      background:monthLoad.status==="failed"?"#fee2e2":"#1e3a5f",color:monthLoad.status==="failed"?"#991b1b":"white",
+      padding:"8px 16px",borderRadius:20,fontSize:13,fontWeight:700,boxShadow:"0 2px 10px rgba(0,0,0,.25)",display:"flex",gap:10,alignItems:"center",maxWidth:"calc(100% - 32px)"}},
+      monthLoad.status==="failed"
+        ?e(React.Fragment,null,e("span",null,monthLoad.month+"分を読み込めませんでした"),
+          e("button",{onClick:()=>ensureMonthLoaded(monthLoad.month,true),style:{padding:"4px 12px",border:"1.5px solid #991b1b",borderRadius:6,background:"white",color:"#991b1b",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},"再読み込み"),
+          e("button",{onClick:()=>setMonthLoad(null),style:{border:"none",background:"none",color:"#991b1b",fontSize:14,cursor:"pointer",fontFamily:"inherit"}},"✕"))
+        :e("span",null,monthLoad.month+"分を読み込んでいます…")
+    ),
     e("div",{style:{maxWidth:1100,margin:"0 auto",padding:"24px 20px"}},
       e("div",null,
-          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView,closesVersion}),
+          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView,closesVersion,ensureMonthLoaded}),
           (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,queueStaffOp,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView,closesVersion})
         )
     ),
