@@ -117,7 +117,6 @@ body{overflow-x:hidden}
 <div id="root"></div>
 <script>
 const {useState,useEffect,useRef,createElement:e} = React;
-
 // ===== CONSTANTS =====
 const INITIAL_EMPLOYEES = [
   {id:1,name:"小川 正訓",loginId:"masakunipapa@docomo.ne.jp",role:"employee",payType:"monthly",monthlyWage:0,department:"建設部門",store:"モノレール"},
@@ -295,16 +294,20 @@ async function withRetry(fn,label){
   return last||{success:false,error:"通信に失敗しました"};
 }
 
+// 2026年9月：ブラウザ側のキャッシュにより、GETの問い合わせが「前回と同じ内容」と判定され、
+// 古い回答がそのまま返ってきてしまうことがあった（月締めの状態が更新ボタンを押しても
+// 反映されないケースの原因のひとつ）。毎回内容が変わる目印(_ts)をURLに付け、
+// あわせてfetch自体にもキャッシュを使わない指定をして、必ず最新のデータを取りに行くようにする。
 async function gasGet(action,params={}){
   return withRetry(async()=>{
-    const q=new URLSearchParams({action,...params}).toString();
-    const res=await fetchWithTimeout(`${GAS_URL}?${q}`);
+    const q=new URLSearchParams({action,...params,_ts:Date.now()+"_"+Math.random().toString(36).slice(2)}).toString();
+    const res=await fetchWithTimeout(`${GAS_URL}?${q}`,{cache:"no-store"});
     return await res.json();
   },"GET "+action);
 }
 async function gasPost(action,data={}){
   return withRetry(async()=>{
-    const res=await fetchWithTimeout(GAS_URL,{method:"POST",body:JSON.stringify({action,...data})});
+    const res=await fetchWithTimeout(GAS_URL,{method:"POST",body:JSON.stringify({action,...data}),cache:"no-store"});
     return await res.json();
   },"POST "+action);
 }
@@ -507,7 +510,6 @@ function rangeText(arr,fallback){
   const v=(arr||[]).filter(x=>x.start&&x.end);
   return v.length?v.map(x=>x.start+"〜"+x.end).join("/"):(fallback||"—");
 }
-
 // ===== 差戻し理由の入力 =====
 const REJECT_REASONS=["時刻が違う","休憩が抜けている","店舗が違う","入力もれがある","その他"];
 function RejectModal({empName,date,onSubmit,onCancel}){
@@ -879,7 +881,6 @@ function LoginScreen({employees,admins,onLogin,onAdminLogin}){
     )
   );
 }
-
 // ===== MONTHLY TABLE =====
 function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
   const {days,totalPay,workDays,
@@ -995,7 +996,7 @@ const STORE_ABBR = {
 };
 // ===== PRINT SUMMARY =====
 function PrintSummary({summary,selectedMonth,isAdmin}){
-  const {emp,days,totalWork,totalPay,workDays,
+  const {emp,days,totalPay,workDays,
     totalNormalMinutes,totalNormalPay,totalOtOnlyMinutes,totalOtOnlyPay,
     totalLnOnlyMinutes,totalLnOnlyPay,totalLnOtMinutes,totalLnOtPay}=summary;
   if(!emp)return null;
@@ -1098,8 +1099,9 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
           // 右端の合計欄は変更しない
           e("td",{colSpan:cols.length-(showPay?1:0),className:"c-wrap"},
             e("div",null,
-              e("div",null,"承認済合計（"+workDays+"日）　実働 "+mHHMM(totalWork)),
-              e("div",{style:{fontWeight:600,marginTop:2}},"　所定勤務　"+mHHMM(totalNormalMinutes||0)+(showPay?"　¥"+(totalNormalPay||0).toLocaleString():"")),
+              e("div",null,"承認済合計"),
+              e("div",{style:{fontWeight:600,marginTop:2}},"　勤務日数　"+workDays+"日"),
+              e("div",{style:{fontWeight:600}},"　所定勤務　"+mHHMM(totalNormalMinutes||0)+(showPay?"　¥"+(totalNormalPay||0).toLocaleString():"")),
               e("div",{style:{fontWeight:600}},"　通常残業　"+mHHMM(totalOtOnlyMinutes||0)+(showPay?"　¥"+(totalOtOnlyPay||0).toLocaleString():"")),
               e("div",{style:{fontWeight:600}},"　深夜勤務　"+mHHMM(totalLnOnlyMinutes||0)+(showPay?"　¥"+(totalLnOnlyPay||0).toLocaleString():"")),
               e("div",{style:{fontWeight:600}},"　深夜残業　"+mHHMM(totalLnOtMinutes||0)+(showPay?"　¥"+(totalLnOtPay||0).toLocaleString():""))
@@ -1114,7 +1116,6 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
     )
   );
 }
-
 // ===== APPROVAL TAB =====
 function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord,saveRecords,selectedMonth,showToast}){
   const managedStores=currentUser.managedStores||[currentUser.store];
@@ -1409,7 +1410,6 @@ function ResetButton({date,onConfirm}){
   );
   return e("button",{className:"btn btn-danger",style:{fontSize:13,padding:"7px 16px"},onClick:()=>setConfirming(true)},"リセット");
 }
-
 // ===== EMPLOYEE VIEW (共通：一般・管理者両方) =====
 function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView}){
   const isAdmin=currentUser.role==="admin"||currentUser.role==="superadmin";
@@ -1850,7 +1850,6 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     e(PrintSummary,{summary,selectedMonth,isAdmin:canSeePay})
   );
 }
-
 // ===== ADD EMPLOYEE FORM =====
 function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,showToast}){
   const [show,setShow]=useState(false);
@@ -1967,7 +1966,6 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
     ))
   );
 }
-
 // ===== ADMIN DASHBOARD (オーナーのみ) =====
 function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView}){
   const [tab,setTab]=useState("summary");
