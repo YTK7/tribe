@@ -205,6 +205,15 @@ const todayStr=formatDate(TODAY);
 const S_LABEL={draft:"下書き",submitted:"承認待ち",approved:"承認済",rejected:"差戻中"};
 const S_LABEL_S={draft:"下書",submitted:"承認待ち",approved:"承認済",rejected:"差戻中"};
 const S_CLASS={draft:"status-draft",submitted:"status-submitted",approved:"status-approved",rejected:"status-rejected"};
+const DOW=["日","月","火","水","木","金","土"];
+// "2026-09-01"→"9/1(火)"のような短い表示にする（印刷帳票・画面の月次一覧で共通利用）
+function shortDateLabel(dateStr){
+  const parts=String(dateStr||"").split("-").map(Number);
+  if(parts.length!==3||parts.some(isNaN))return dateStr||"";
+  const[y,mo,d]=parts;
+  const dowIdx=new Date(y,mo-1,d).getDay();
+  return `${mo}/${d}(${DOW[dowIdx]})`;
+}
 
 // バイリンガル対象スタッフID（SAWAN・OBIDOS）
 const BILINGUAL_IDS=[13,14];
@@ -308,6 +317,9 @@ function gasDeleteRecord(empId,date){
 // 管理者の操作を履歴として記録する（承認・差戻し・差戻し取消・月締め）
 // 履歴の記録に失敗したときに知らせるための受け口（Appから設定される）
 let onLogFailed=null;
+// 「今日」タブで未保存（未提出）の入力があるかどうか（EmployeeViewから更新される）。
+// 「🔄 最新の状態に更新」ボタンを押したときに、入力中の内容を誤って消さないよう確認するために使う。
+let hasUnsavedEntryFlag=false;
 function logAction(by,action,targetName,targetDate,note){
   return gasPost("addLog",{log:{
     at:new Date().toISOString(),
@@ -804,14 +816,22 @@ function refreshApp(){
   const base=location.origin+location.pathname;
   location.href=base+"?v="+Date.now();
 }
+// アプリのプログラム・勤怠データの両方を最新の状態にするボタン（2026年9月：2つあったボタンを1つに統合）
+// 「今日」タブに未保存（未提出）の入力があるときは、誤って消してしまわないよう確認してから実行する。
 function UpdateAppButton(){
+  const onClick=()=>{
+    if(hasUnsavedEntryFlag&&!window.confirm(
+      "入力中（未提出分）の内容が消えます。よろしいですか？\n※すでに保存・提出済みのデータは消えません。"
+    ))return;
+    refreshApp();
+  };
   return e("button",{
     type:"button",
-    title:"表示が古い場合はここを押して最新版を読み込み直してください",
+    title:"表示が古い場合はここを押して、アプリのプログラムと勤怠データの両方を最新の状態に読み込み直してください",
     style:{fontSize:12,padding:"5px 12px",background:"transparent",color:"white",
       border:"1px solid rgba(255,255,255,.4)",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},
-    onClick:refreshApp
-  },"⟳ アプリを更新");
+    onClick
+  },"🔄 最新の状態に更新");
 }
 
 // ===== LOGIN SCREEN（ID・パスワード方式） =====
@@ -862,7 +882,7 @@ function LoginScreen({employees,admins,onLogin,onAdminLogin}){
 
 // ===== MONTHLY TABLE =====
 function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
-  const {days,totalWork,totalOvertime,totalPay,workDays,
+  const {days,totalPay,workDays,
     totalNormalMinutes,totalNormalPay,totalOtOnlyMinutes,totalOtOnlyPay,
     totalLnOnlyMinutes,totalLnOnlyPay,totalLnOtMinutes,totalLnOtPay}=summary;
   const isMonthly=summary.isMonthly;
@@ -873,55 +893,85 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
   const targetEmp=summary.emp||currentUser;
   const showTravel=needTravelCol(targetEmp,days);
 
+  // 印刷帳票と列の並び・表示を統一（2026年9月）：日付／店舗（簡易表示）／出勤／退勤／休憩／[移動]／備考／
+  // 所定勤務／通常残業／深夜勤務／深夜残業／状態（承認者名つき）／[日給]。
+  // 横スクロールなしで収まるよう、列幅を絞ってフォントも小さくしている。
+  const cols=showTravel?[
+    {k:"date",label:"日付",w:5.5,nowrap:true},
+    {k:"store",label:"店舗",w:7},
+    {k:"in",label:"出勤",w:5.5,nowrap:true},
+    {k:"out",label:"退勤",w:5.5,nowrap:true},
+    {k:"brk",label:"休憩",w:10},
+    {k:"trv",label:"移動",w:9},
+    {k:"note",label:"備考",w:9},
+    {k:"normal",label:"所定勤務",w:6.5,nowrap:true},
+    {k:"otOnly",label:"通常残業",w:6.5,nowrap:true},
+    {k:"lnOnly",label:"深夜勤務",w:6.5,nowrap:true},
+    {k:"lnOt",label:"深夜残業",w:6.5,nowrap:true},
+    {k:"st",label:"状態",w:showPay?9:16},
+    ...(showPay?[{k:"pay",label:"日給(円)",w:7,nowrap:true,right:true}]:[])
+  ]:[
+    {k:"date",label:"日付",w:6,nowrap:true},
+    {k:"store",label:"店舗",w:7.5},
+    {k:"in",label:"出勤",w:6,nowrap:true},
+    {k:"out",label:"退勤",w:6,nowrap:true},
+    {k:"brk",label:"休憩",w:11},
+    {k:"note",label:"備考",w:10},
+    {k:"normal",label:"所定勤務",w:7,nowrap:true},
+    {k:"otOnly",label:"通常残業",w:7,nowrap:true},
+    {k:"lnOnly",label:"深夜勤務",w:7,nowrap:true},
+    {k:"lnOt",label:"深夜残業",w:7,nowrap:true},
+    {k:"st",label:"状態",w:showPay?9.5:17},
+    ...(showPay?[{k:"pay",label:"日給(円)",w:7.5,nowrap:true,right:true}]:[])
+  ];
+  const totalW=cols.reduce((s,c)=>s+c.w,0);
+  const cellSt=c=>({whiteSpace:c.nowrap?"nowrap":"normal",wordBreak:c.nowrap?"normal":"break-all",textAlign:c.right?"right":"left"});
+
   return e("div",null,
     isMgrClosed&&e("div",{style:{background:"#d1fae5",borderRadius:10,padding:"12px 16px",marginBottom:16}},
       e("span",{style:{fontSize:14,fontWeight:700,color:"#065f46"}},"🔒 "+selectedMonth+"分は管理者により締め済みです"),
       e("div",{style:{fontSize:11,color:"#059669",marginTop:2}},"入力・訂正はできません。変更が必要な場合は管理者にご連絡ください。")
     ),
     e("div",{style:{overflowX:"auto"}},
-      e("table",{className:"table",style:{fontSize:13}},
-        e("thead",null,e("tr",null,[
-          e("th",{key:"date"},"日付"),e("th",{key:"store"},"店舗"),e("th",{key:"in"},"出勤"),e("th",{key:"out"},"退勤"),e("th",{key:"brk"},"休憩"),
-          showTravel&&e("th",{key:"trv"},"移動"),
-          e("th",{key:"work"},"実働"),e("th",{key:"ot"},"残業"),e("th",{key:"ln"},"深夜"),e("th",{key:"st"},"状態"),
-          showPay&&e("th",{key:"pay"},"日給")
-        ])),
+      e("table",{className:"table",style:{fontSize:10.5,tableLayout:"fixed",minWidth:880}},
+        e("colgroup",null,...cols.map(c=>e("col",{key:c.k,style:{width:(c.w/totalW*100).toFixed(2)+"%"}}))),
+        e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k,style:{padding:"6px 5px",whiteSpace:"normal",wordBreak:"break-all"}},c.label)))),
         e("tbody",null,
-          days.length===0&&e("tr",null,e("td",{colSpan:showPay?10+(showTravel?1:0):9+(showTravel?1:0),style:{textAlign:"center",color:"#94a3b8",padding:"24px"}},"データなし")),
-          ...days.map((r,i)=>e("tr",{key:i,style:{background:r.status==="rejected"?"#fff1f2":undefined}},
-            e("td",{style:{fontWeight:600}},r.date),
-            e("td",{style:{fontSize:11,color:"#475569"}},r.store||"—"),
-            e("td",null,r.clockIn||"—"),e("td",null,r.clockOut||"—"),
-            e("td",{style:{fontSize:12}},rangeText(r.breaks,r.breakMinutes?r.breakMinutes+"分":"—")),
-            showTravel&&e("td",{style:{fontSize:12,color:"#0369a1"}},rangeText(r.travelTimes)),
-            e("td",null,mHHMM(r.workMinutes)),
-            e("td",{style:{color:r.overtimeMinutes>0?"#d97706":"#94a3b8"}},mHHMM(r.overtimeMinutes)),
-            e("td",{style:{color:r.lateNightMinutes>0?"#7c3aed":"#94a3b8"}},mHHMM(r.lateNightMinutes)),
-            e("td",null,e("span",{className:`status-badge ${S_CLASS[r.status||"draft"]}`},S_LABEL[r.status||"draft"])),
-            showPay&&e("td",{style:{fontWeight:700,color:"#059669"}},r.status==="approved"?"¥"+(r.pay||0).toLocaleString():"—")
-          ))
+          days.length===0&&e("tr",null,e("td",{colSpan:cols.length,style:{textAlign:"center",color:"#94a3b8",padding:"24px"}},"データなし")),
+          ...days.map((r,i)=>{
+            const approver=r.status==="approved"?r.approvedBy:r.status==="rejected"?r.rejectBy:null;
+            return e("tr",{key:i,style:{background:r.status==="rejected"?"#fff1f2":undefined}},
+              e("td",{style:{...cellSt(cols[0]),padding:"6px 5px",fontWeight:600}},shortDateLabel(r.date)),
+              e("td",{style:{...cellSt(cols[1]),padding:"6px 5px",color:"#475569"}},r.store?(STORE_ABBR[r.store]||r.store):"—"),
+              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px"}},r.clockIn||"—"),
+              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px"}},r.clockOut||"—"),
+              e("td",{style:{...cellSt({}),padding:"6px 5px"}},rangeText(r.breaks,r.breakMinutes?r.breakMinutes+"分":"—")),
+              showTravel&&e("td",{style:{...cellSt({}),padding:"6px 5px",color:"#0369a1"}},rangeText(r.travelTimes)),
+              e("td",{style:{...cellSt({}),padding:"6px 5px"}},r.note||"—"),
+              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px"}},mHHMM(r.normalMinutes)),
+              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.otOnlyMinutes>0?"#d97706":"#94a3b8"}},mHHMM(r.otOnlyMinutes)),
+              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.lnOnlyMinutes>0?"#7c3aed":"#94a3b8"}},mHHMM(r.lnOnlyMinutes)),
+              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.lnOtMinutes>0?"#7c3aed":"#94a3b8"}},mHHMM(r.lnOtMinutes)),
+              e("td",{style:{...cellSt({}),padding:"6px 5px"}},
+                e("span",{className:`status-badge ${S_CLASS[r.status||"draft"]}`,style:{fontSize:9.5,padding:"2px 7px",whiteSpace:"nowrap"}},S_LABEL[r.status||"draft"]),
+                approver?e("span",{style:{color:"#666",marginLeft:3,whiteSpace:"nowrap"}}," "+shortName(approver)):null
+              ),
+              showPay&&e("td",{style:{...cellSt({nowrap:true,right:true}),padding:"6px 5px",fontWeight:700,color:"#059669"}},r.status==="approved"?"¥"+(r.pay||0).toLocaleString():"—")
+            );
+          })
         ),
         e("tfoot",null,
-          e("tr",{style:{background:"#f8fafc",fontWeight:700}},
-            e("td",{colSpan:5,style:{padding:"12px 16px",color:"#1e3a5f"}},"承認済合計（"+(workDays||0)+"日）"),
-            showTravel&&e("td"),
-            e("td",{style:{padding:"12px 16px"}},mHHMM(totalWork)),
-            e("td",{style:{padding:"12px 16px",color:"#d97706"}},mHHMM(totalOvertime)),
-            e("td",{style:{padding:"12px 16px",color:"#7c3aed"}},mHHMM(summary.totalLateNight||0)),
-            e("td"),
-            showPay&&e("td",{style:{padding:"12px 16px",color:"#059669",fontSize:15}},
-              e("div",null,"¥"+totalPay.toLocaleString()),
-              e("div",{style:{fontSize:9,fontWeight:400,color:"#94a3b8",marginTop:2}},"※内訳は端数処理の関係で数円ずれる場合あり")
-            )
-          ),
-          // 印刷帳票と同じ内訳（所定勤務／通常残業／深夜勤務／深夜残業）を画面側にも表示。
-          // 金額（¥）は showPay 条件（管理者・オーナーが日給制スタッフを見ているとき）のみ付ける
           e("tr",{style:{background:"#f8fafc"}},
-            e("td",{colSpan:(showPay?10:9)+(showTravel?1:0),style:{padding:"2px 16px 12px",fontSize:12,color:"#475569",fontWeight:600,lineHeight:1.7}},
+            e("td",{colSpan:cols.length,style:{padding:"10px 12px",fontSize:11.5,color:"#475569",fontWeight:600,lineHeight:1.7}},
+              e("div",{style:{fontWeight:700,color:"#1e3a5f",marginBottom:2}},"承認済合計（"+(workDays||0)+"日）"),
               e("div",null,"所定勤務　"+mHHMM(totalNormalMinutes||0)+(showPay?"　¥"+(totalNormalPay||0).toLocaleString():"")),
               e("div",null,"通常残業　"+mHHMM(totalOtOnlyMinutes||0)+(showPay?"　¥"+(totalOtOnlyPay||0).toLocaleString():"")),
               e("div",null,"深夜勤務　"+mHHMM(totalLnOnlyMinutes||0)+(showPay?"　¥"+(totalLnOnlyPay||0).toLocaleString():"")),
-              e("div",null,"深夜残業　"+mHHMM(totalLnOtMinutes||0)+(showPay?"　¥"+(totalLnOtPay||0).toLocaleString():""))
+              e("div",null,"深夜残業　"+mHHMM(totalLnOtMinutes||0)+(showPay?"　¥"+(totalLnOtPay||0).toLocaleString():"")),
+              showPay&&e("div",{style:{marginTop:4,fontSize:13,color:"#059669"}},
+                "合計　¥"+totalPay.toLocaleString(),
+                e("span",{style:{fontSize:9,fontWeight:400,color:"#94a3b8",marginLeft:8}},"※内訳は端数処理の関係で数円ずれる場合あり")
+              )
             )
           )
         )
@@ -935,8 +985,8 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
   );
 }
 
-// 印刷帳票の「店舗」欄だけを簡易表示にするための短縮名（データそのものは変更しない）
-const STORE_ABBR_PRINT = {
+// 印刷帳票・画面の月次一覧の「店舗」欄を簡易表示にするための短縮名（データそのものは変更しない）
+const STORE_ABBR = {
   "GOLF BAR KING": "GOLF",
   "JP BAR KING": "JP",
   "カリッジュ児島店": "カリッジュ",
@@ -961,7 +1011,6 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
   const wageLabel=isAdmin
     ?(emp.payType==="monthly"?" ／ 月給: ¥"+(emp.monthlyWage||0).toLocaleString():" ／ 時給: ¥"+(emp.hourlyWage||0).toLocaleString())
     :"";
-  const DOW=["日","月","火","水","木","金","土"];
 
   // 列幅（重み）→ 1ページに収まるよう固定幅で割り当てる（合計は100でなくてもよい。下でtotalWに対する比率に変換される）
   // 状態欄・日給欄は余白が出やすいため縮小し、実働/残業/深夜の3列は
@@ -1019,7 +1068,7 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
         const isWeekend=dowIdx===0||dowIdx===6;
         return e("tr",{key:i,className:isWeekend?"row-weekend":""},
           e("td",{className:"c-nowrap"},dateLabel),
-          e("td",{className:"c-wrap"},r?.store?(STORE_ABBR_PRINT[r.store]||r.store):"—"),
+          e("td",{className:"c-wrap"},r?.store?(STORE_ABBR[r.store]||r.store):"—"),
           e("td",{className:"c-nowrap"},r?.clockIn||"—"),
           e("td",{className:"c-nowrap"},r?.clockOut||"—"),
           e("td",{className:"c-wrap"},breakStr),
@@ -1383,19 +1432,6 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   const [subTo,setSubTo]=useState("");
   const [subStore,setSubStore]=useState(currentUser.store||ALL_STORES[0]);
 
-  useEffect(()=>{
-    const r=getRecord(currentUser.id,editDate);
-    const eb=r.breaks&&r.breaks.length?r.breaks:[{start:"",end:""}];
-    const et=r.travelTimes&&r.travelTimes.length?r.travelTimes:[{start:"",end:""}];
-    setForm({clockIn:r.clockIn||"",clockOut:r.clockOut||"",breaks:eb,travelTimes:et,note:r.note||""});
-    // その日に記録された店舗を復元（未記録の日は自分の所属店舗）
-    setSelectedStore(r.store||currentUser.store||"");
-    // 別店舗入力欄は日付を変えたら閉じる
-    // 別店舗の記録が備考にある日は、チェックを入れた状態で開く
-    const hasSub=(r.note||"").split(" / ").some(s=>/^\d{1,2}:\d{2}-\d{1,2}:\d{2}\s+\S/.test(s.trim()));
-    setShowSubStore(hasSub);setSubFrom("");setSubTo("");
-  },[editDate,records]);
-
   const savePassToList=(hash)=>{
     const upd={...currentUser,passHash:hash};
     const inAdmins=(admins||[]).some(x=>x.id===currentUser.id);
@@ -1424,6 +1460,34 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
       JSON.stringify(vb(rec.travelTimes))===JSON.stringify(vb(form.travelTimes));
     return !same;
   })();
+  // ナビゲーションバーの「🔄 最新の状態に更新」ボタンから見えるように、未保存の入力があるかどうかを
+  // モジュール変数に反映しておく（画面を離れたら必ずfalseに戻す）
+  useEffect(()=>{
+    hasUnsavedEntryFlag=hasUnsaved;
+    return ()=>{hasUnsavedEntryFlag=false;};
+  },[hasUnsaved]);
+  // 対象日を切り替えたとき、その日の記録を入力欄に読み込む。
+  // ※以前はrecords（全員分の勤怠データ全体）が変わるたびに毎回ここで入力欄をリセットしていたが、
+  //   「最新の情報に更新」ボタンやタブ復帰時の自動更新でrecordsが更新されるたびに、
+  //   今まさに入力中（未提出）の内容まで消えてしまう不具合があったため、
+  //   「日付を切り替えたとき」と「まだ何も入力していないとき」だけ読み込み直す方式に変更した。
+  //   （入力中に裏側のデータが更新されても、提出するまでは自分の入力が優先される）
+  const prevEditDateRef=useRef(editDate);
+  useEffect(()=>{
+    const dateChanged=editDate!==prevEditDateRef.current;
+    prevEditDateRef.current=editDate;
+    if(!dateChanged&&hasUnsaved)return;
+    const r=getRecord(currentUser.id,editDate);
+    const eb=r.breaks&&r.breaks.length?r.breaks:[{start:"",end:""}];
+    const et=r.travelTimes&&r.travelTimes.length?r.travelTimes:[{start:"",end:""}];
+    setForm({clockIn:r.clockIn||"",clockOut:r.clockOut||"",breaks:eb,travelTimes:et,note:r.note||""});
+    // その日に記録された店舗を復元（未記録の日は自分の所属店舗）
+    setSelectedStore(r.store||currentUser.store||"");
+    // 別店舗入力欄は日付を変えたら閉じる
+    // 別店舗の記録が備考にある日は、チェックを入れた状態で開く
+    const hasSub=(r.note||"").split(" / ").some(s=>/^\d{1,2}:\d{2}-\d{1,2}:\d{2}\s+\S/.test(s.trim()));
+    setShowSubStore(hasSub);setSubFrom("");setSubTo("");
+  },[editDate,records]);
   // 未保存の入力があるまま日付を移動しようとしたら確認する
   const changeDate=(next)=>{
     if(!next||next===editDate)return;
@@ -1624,7 +1688,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
         // 移動時間（建設部門のみ）
         isConstruction&&e("div",{style:{marginBottom:14}},
           e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
-            e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700}},"移動時間 / Travel Time"),
+            e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700}},L("移動時間","Travel Time",isBi)),
             canEdit&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,travelTimes:[...f.travelTimes,{start:"",end:""}]})),style:{fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #1e3a5f",background:"white",color:"#1e3a5f",cursor:"pointer",fontWeight:700}},L("＋ 追加","＋ Add",isBi))
           ),
           ...(form.travelTimes||[{start:"",end:""}]).map((t,i)=>e("div",{key:i,style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
@@ -2166,6 +2230,8 @@ function App(){
   const [loadFailed,setLoadFailed]=useState(null);
   const reloadFromGAS=useRef(null);
   const [reloading,setReloading]=useState(false);
+  // データを最後に取り込んだ時刻（ナビゲーションバーの更新ボタン横に表示し、古さを確認できるようにする）
+  const [lastLoadedAt,setLastLoadedAt]=useState(null);
   // closedSet（月締めの状態）はReactの外側で管理しているため、
   // GASから読み込んで更新しても、それだけでは画面が再描画されない。
   // このカウンターを更新することで、App配下すべてを再描画させる
@@ -2219,6 +2285,7 @@ function App(){
           !closeRes.success&&"月締め"
         ].filter(Boolean);
         setLoadFailed(failed.length>0?failed:null);
+        setLastLoadedAt(new Date());
       }catch(e){
         console.error("GAS初期ロードエラー:",e);
         setLoadFailed(["データ"]);
@@ -2227,6 +2294,29 @@ function App(){
     loadFromGAS();
     reloadFromGAS.current=loadFromGAS;   // あとから呼び直せるようにしておく
   },[]);
+  // 別の端末で提出・差し戻し・承認された内容が反映されないまま画面が古くなる対策：
+  // 他のアプリ・画面に切り替えてこのページに戻ってきたタイミングで、自動的に最新データを取り込む。
+  // （ページを開きっぱなしで一度も切り替えない場合はこれだけでは更新されないため、
+  //   ナビゲーションバーの「🔄 最新の情報に更新」ボタンでも手動で更新できるようにしてある）
+  const lastAutoReloadRef=useRef(Date.now());
+  useEffect(()=>{
+    const AUTO_RELOAD_MIN_INTERVAL=60*1000; // 短時間に連続して発生しても通信しすぎないように間隔を空ける
+    const tryAutoReload=()=>{
+      if(document.visibilityState!=="visible")return;
+      if(!reloadFromGAS.current)return;
+      if(reloading)return;
+      const now=Date.now();
+      if(now-lastAutoReloadRef.current<AUTO_RELOAD_MIN_INTERVAL)return;
+      lastAutoReloadRef.current=now;
+      retryLoad();
+    };
+    document.addEventListener("visibilitychange",tryAutoReload);
+    window.addEventListener("focus",tryAutoReload);
+    return()=>{
+      document.removeEventListener("visibilitychange",tryAutoReload);
+      window.removeEventListener("focus",tryAutoReload);
+    };
+  },[reloading]);
   const setCurrentUser=emp=>{
     if(emp)saveLS("kintai_session",{empId:emp.id,role:emp.role,ts:Date.now()});
     else try{localStorage.removeItem("kintai_session");}catch{}
@@ -2365,7 +2455,11 @@ function App(){
       e("div",{style:{display:"flex",alignItems:"center",gap:10}},
         currentUser.role==="superadmin"&&e("span",{style:{fontSize:11,background:"rgba(124,58,237,.6)",padding:"2px 8px",borderRadius:20}},"オーナー"),
         currentUser.role==="admin"&&e("span",{style:{fontSize:11,background:"rgba(255,255,255,.2)",padding:"2px 8px",borderRadius:20}},"管理者"),
+        // アプリのプログラム・勤怠データの両方を最新の状態にするボタン（2026年9月：2つあったボタンを1つに統合）
+        // タブに戻ってきたときは自動更新されるが、開きっぱなしで気になったときにも押せるようにしてある
         e(UpdateAppButton,null),
+        lastLoadedAt&&e("span",{style:{fontSize:10.5,color:"rgba(255,255,255,.65)"}},
+          "（"+lastLoadedAt.getHours()+":"+String(lastLoadedAt.getMinutes()).padStart(2,"0")+"時点）"),
         e("button",{style:{fontSize:12,padding:"5px 12px",background:"transparent",color:"white",border:"1px solid rgba(255,255,255,.4)",borderRadius:6,cursor:"pointer",fontFamily:"inherit"},
           onClick:()=>{saveLS("kintai_session",{empId:currentUser.id,role:currentUser.role,view:"login",ts:Date.now()});setCurrentUser(null);setView("login");}},"⌂ ログアウト"),
         // オーナーのみダッシュボードへのリンク
