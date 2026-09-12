@@ -204,6 +204,32 @@ const todayStr=formatDate(TODAY);
 const S_LABEL={draft:"下書き",submitted:"承認待ち",approved:"承認済",rejected:"差戻中"};
 const S_LABEL_S={draft:"下書",submitted:"承認待ち",approved:"承認済",rejected:"差戻中"};
 const S_CLASS={draft:"status-draft",submitted:"status-submitted",approved:"status-approved",rejected:"status-rejected"};
+// 集計項目の名称（2026年9月・追加修正⑪：TKCの表記にそろえて変更）。
+// 印刷帳票・月次明細（ダッシュボード）・月次一覧（マイ勤怠）・マイ勤怠のカード・使い方で共通利用する。
+// 名称を変えるときはここだけを直せば全ページにそろう。
+//   旧：勤務日数／所定勤務／通常残業／深夜勤務／深夜残業
+const T_LABEL={days:"労働日数",normal:"所定労働時間",otOnly:"時間外労働",lnOnly:"深夜労働",lnOt:"時間外深夜労働"};
+const T_LABEL_EN={days:"Work Days",normal:"Scheduled Hours",otOnly:"Overtime",lnOnly:"Late Night",lnOt:"Late Night Overtime"};
+// 表の列見出し用（列幅が狭いため、区切りのよい位置で2行に分ける。"\n"の位置で改行する）
+const T_COL={normal:"所定\n労働時間",otOnly:"時間外\n労働",lnOnly:"深夜\n労働",lnOt:"時間外\n深夜労働"};
+// 「承認済みのデータだけを集計している」ことの注意書き（集計を出す場所すべてに付ける）
+const APPROVED_NOTE="※ 承認済みのデータのみ集計";
+// 列見出しの"\n"を<br>にして描画する（印刷帳票・月次一覧の見出しで共通利用）
+function colHead(label){
+  const parts=String(label).split("\n");
+  if(parts.length===1)return label;
+  const out=[];
+  parts.forEach((t,i)=>{ if(i>0)out.push(e("br",{key:"br"+i})); out.push(t); });
+  return out;
+}
+// 合計欄の1行（「所定労働時間　12時間00分　¥12,000」）。項目名の幅をそろえて数値の位置を合わせる
+function sumLine(label,value,opts){
+  const o=opts||{};
+  return e("div",{key:label,style:{fontWeight:o.weight||600,marginTop:o.marginTop||0,whiteSpace:"nowrap"}},
+    e("span",{style:{display:"inline-block",minWidth:o.labelWidth||"8.5em"}},label),
+    value
+  );
+}
 const DOW=["日","月","火","水","木","金","土"];
 // "2026-09-01"→"9/1(火)"のような短い表示にする（印刷帳票・画面の月次一覧で共通利用）
 function shortDateLabel(dateStr){
@@ -541,7 +567,8 @@ function mergeRanges(ranges){
 const overlapMin=(a1,a2,b1,b2)=>Math.max(0,Math.min(a2,b2)-Math.max(a1,b1));
 
 function calcRecord(rec){
-  // normal/otOnly/lnOnly/lnOt＝所定勤務／通常残業／深夜勤務／深夜残業の内訳（分・円）。
+  // normal/otOnly/lnOnly/lnOt＝所定労働時間／時間外労働／深夜労働／時間外深夜労働の内訳（分・円）。
+  // （2026年9月・追加修正⑪で名称のみ変更。旧：所定勤務／通常残業／深夜勤務／深夜残業。計算は同じ）
   // 印刷帳票（13番）の内訳表示のために追加。合計payの計算・丸め方はこれまでと変えていない
   const ZERO={workMinutes:0,overtimeMinutes:0,lateNightMinutes:0,pay:0,
     normalMinutes:0,normalPay:0,otOnlyMinutes:0,otOnlyPay:0,
@@ -824,13 +851,14 @@ function HelpModal({isAdmin,isOwner,onClose}){
 
     h(3,"月締めをする"),
     p("その月の承認がすべて終わったら月締めをします。締めるとスタッフは修正できなくなります。"),
-    box("warn",[e("b",{key:"b"},"差戻中が残っていると締められません。"),e("br",{key:"br"}),
-      "すべて承認するか、不要なら取り消してから実行してください。"]),
-    box("info","締めたあとに修正が必要になったら、月締めを解除すれば元に戻せます。"),
+    p([tag("承認管理"),"の店舗名の右にある「この店舗を月締め」で、店舗ごとに締められます（店長は担当店舗のみ）。オーナーは上部のボタンで全員一括でも締められます。"]),
+    box("warn",[e("b",{key:"b"},"承認待ち・差戻中が残っていると締められません。"),e("br",{key:"br"}),
+      "すべて承認するか、不要なら取り消してから実行してください。店長ご自身の勤怠は、他の管理者かオーナーに承認してもらってから締めてください。"]),
+    box("info","締めたあとに修正が必要になったら、月締めを解除すれば元に戻せます（解除はオーナーのみ）。"),
 
     h(4,"集計を確認・印刷する"),
     p([tag("📊 月次一覧"),"で、スタッフごとの合計が見られます。"]),
-    list(["勤務日数・実働時間","残業時間（1日8時間を超えた分）","深夜時間（22:00〜翌5:00）","金額（管理者・オーナーのみ）"]),
+    list([T_LABEL.days+"・"+T_LABEL.normal,T_LABEL.otOnly+"（1日8時間を超えた分）",T_LABEL.lnOnly+"（22:00〜翌5:00）",T_LABEL.lnOt+"（時間外かつ深夜の分）","金額（管理者・オーナーのみ）"]),
     box("info",[e("b",{key:"b"},"集計されるのは承認済みだけです。"),e("br",{key:"br"}),
       "承認待ちのままだと合計に入りません。月末は承認漏れがないか確認してください。"]),
 
@@ -838,8 +866,8 @@ function HelpModal({isAdmin,isOwner,onClose}){
     e("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:13,margin:"9px 0"}},
       e("thead",null,e("tr",null,...["項目","計算"].map(x=>e("th",{key:x,style:{border:"1px solid #e2e8f0",
         padding:"6px 9px",background:"#f8fafc",fontWeight:700,color:"#1e3a5f",fontSize:12,textAlign:"left"}},x)))),
-      e("tbody",null,...[["通常","時給 × 1.00"],["残業（1日8時間超）","時給 × 1.25"],
-        ["深夜（22:00〜翌5:00）","時給 × 1.25"],["深夜かつ残業","時給 × 1.50"]]
+      e("tbody",null,...[[T_LABEL.normal,"時給 × 1.00"],[T_LABEL.otOnly+"（1日8時間超）","時給 × 1.25"],
+        [T_LABEL.lnOnly+"（22:00〜翌5:00）","時給 × 1.25"],[T_LABEL.lnOt+"（時間外かつ深夜）","時給 × 1.50"]]
         .map(([a,b2],i)=>e("tr",{key:i},
           e("td",{style:{border:"1px solid #e2e8f0",padding:"6px 9px"}},a),
           e("td",{style:{border:"1px solid #e2e8f0",padding:"6px 9px"}},b2))))
@@ -1043,7 +1071,7 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
   const showTravel=needTravelCol(targetEmp,days);
 
   // 印刷帳票と列の並び・表示を統一（2026年9月）：日付／店舗（簡易表示）／出勤／退勤／休憩／[移動]／備考／
-  // 所定勤務／通常残業／深夜勤務／深夜残業／状態（承認者名つき）／[日給]。
+  // 所定労働時間／時間外労働／深夜労働／時間外深夜労働／状態（承認者名つき）／[日給]。
   // 横スクロールなしで収まるよう、列幅を絞ってフォントも小さくしている。
   const cols=showTravel?[
     {k:"date",label:"日付",w:5.5,nowrap:true},
@@ -1053,10 +1081,10 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
     {k:"brk",label:"休憩",w:10},
     {k:"trv",label:"移動",w:9},
     {k:"note",label:"備考",w:9},
-    {k:"normal",label:"所定勤務",w:6.5,nowrap:true},
-    {k:"otOnly",label:"通常残業",w:6.5,nowrap:true},
-    {k:"lnOnly",label:"深夜勤務",w:6.5,nowrap:true},
-    {k:"lnOt",label:"深夜残業",w:6.5,nowrap:true},
+    {k:"normal",label:T_COL.normal,w:6.5,nowrap:true},
+    {k:"otOnly",label:T_COL.otOnly,w:6.5,nowrap:true},
+    {k:"lnOnly",label:T_COL.lnOnly,w:6.5,nowrap:true},
+    {k:"lnOt",label:T_COL.lnOt,w:6.5,nowrap:true},
     {k:"st",label:"状態",w:showPay?9:16},
     ...(showPay?[{k:"pay",label:"日給(円)",w:7,nowrap:true,right:true}]:[])
   ]:[
@@ -1066,10 +1094,10 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
     {k:"out",label:"退勤",w:6,nowrap:true},
     {k:"brk",label:"休憩",w:11},
     {k:"note",label:"備考",w:10},
-    {k:"normal",label:"所定勤務",w:7,nowrap:true},
-    {k:"otOnly",label:"通常残業",w:7,nowrap:true},
-    {k:"lnOnly",label:"深夜勤務",w:7,nowrap:true},
-    {k:"lnOt",label:"深夜残業",w:7,nowrap:true},
+    {k:"normal",label:T_COL.normal,w:7,nowrap:true},
+    {k:"otOnly",label:T_COL.otOnly,w:7,nowrap:true},
+    {k:"lnOnly",label:T_COL.lnOnly,w:7,nowrap:true},
+    {k:"lnOt",label:T_COL.lnOt,w:7,nowrap:true},
     {k:"st",label:"状態",w:showPay?9.5:17},
     ...(showPay?[{k:"pay",label:"日給(円)",w:7.5,nowrap:true,right:true}]:[])
   ];
@@ -1084,7 +1112,7 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
     e("div",{style:{overflowX:"auto"}},
       e("table",{className:"table",style:{fontSize:10.5,tableLayout:"fixed",minWidth:880}},
         e("colgroup",null,...cols.map(c=>e("col",{key:c.k,style:{width:(c.w/totalW*100).toFixed(2)+"%"}}))),
-        e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k,style:{padding:"6px 5px",whiteSpace:"normal",wordBreak:"break-all"}},c.label)))),
+        e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k,style:{padding:"6px 5px",whiteSpace:"normal",wordBreak:"break-all"}},colHead(c.label))))),
         e("tbody",null,
           days.length===0&&e("tr",null,e("td",{colSpan:cols.length,style:{textAlign:"center",color:"#94a3b8",padding:"24px"}},"データなし")),
           ...days.map((r,i)=>{
@@ -1112,11 +1140,13 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
         e("tfoot",null,
           e("tr",{style:{background:"#f8fafc"}},
             e("td",{colSpan:cols.length,style:{padding:"10px 12px",fontSize:11.5,color:"#475569",fontWeight:600,lineHeight:1.7}},
-              e("div",{style:{fontWeight:700,color:"#1e3a5f",marginBottom:2}},"承認済合計（"+(workDays||0)+"日）"),
-              e("div",null,"所定勤務　"+mHHMM(totalNormalMinutes||0)+(showPay?"　¥"+(totalNormalPay||0).toLocaleString():"")),
-              e("div",null,"通常残業　"+mHHMM(totalOtOnlyMinutes||0)+(showPay?"　¥"+(totalOtOnlyPay||0).toLocaleString():"")),
-              e("div",null,"深夜勤務　"+mHHMM(totalLnOnlyMinutes||0)+(showPay?"　¥"+(totalLnOnlyPay||0).toLocaleString():"")),
-              e("div",null,"深夜残業　"+mHHMM(totalLnOtMinutes||0)+(showPay?"　¥"+(totalLnOtPay||0).toLocaleString():"")),
+              // 2026年9月（追加修正⑪）：見出し「承認済合計（○日）」をやめ、労働日数から始まる5行にそろえた（印刷帳票と同じ）
+              e("div",{style:{fontWeight:700,color:"#94a3b8",fontSize:10.5,marginBottom:2}},APPROVED_NOTE),
+              sumLine(T_LABEL.days,(workDays||0)+"日",{weight:700}),
+              sumLine(T_LABEL.normal,mHHMM(totalNormalMinutes||0)+(showPay?"　¥"+(totalNormalPay||0).toLocaleString():"")),
+              sumLine(T_LABEL.otOnly,mHHMM(totalOtOnlyMinutes||0)+(showPay?"　¥"+(totalOtOnlyPay||0).toLocaleString():"")),
+              sumLine(T_LABEL.lnOnly,mHHMM(totalLnOnlyMinutes||0)+(showPay?"　¥"+(totalLnOnlyPay||0).toLocaleString():"")),
+              sumLine(T_LABEL.lnOt,mHHMM(totalLnOtMinutes||0)+(showPay?"　¥"+(totalLnOtPay||0).toLocaleString():"")),
               showPay&&e("div",{style:{marginTop:4,fontSize:13,color:"#059669"}},
                 "合計　¥"+totalPay.toLocaleString(),
                 e("span",{style:{fontSize:9,fontWeight:400,color:"#94a3b8",marginLeft:8}},"※内訳は端数処理の関係で数円ずれる場合あり")
@@ -1128,7 +1158,8 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
     ),
     // 月給制スタッフの給与表示（管理者・オーナーのみ）
     isMonthly&&canSeePay&&e("div",{style:{marginTop:12,background:"#ecfdf5",border:"2px solid #059669",borderRadius:10,padding:"12px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}},
-      e("span",{style:{fontSize:13,fontWeight:700,color:"#065f46"}},"月給（"+(workDays>0?"今月勤務あり":"今月勤務なし")+"）"),
+      e("span",{style:{fontSize:13,fontWeight:700,color:"#065f46"}},"月給（"+(workDays>0?"今月勤務あり":"今月勤務なし")+"）",
+        e("span",{style:{fontSize:10,fontWeight:400,color:"#059669",marginLeft:8}},APPROVED_NOTE)),
       e("span",{style:{fontSize:18,fontWeight:700,color:"#059669"}},"¥"+totalPay.toLocaleString())
     )
   );
@@ -1163,7 +1194,8 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
 
   // 列幅（重み）→ 1ページに収まるよう固定幅で割り当てる（合計は100でなくてもよい。下でtotalWに対する比率に変換される）
   // 状態欄・日給欄は余白が出やすいため縮小し、実働/残業/深夜の3列は
-  // 所定勤務／通常残業／深夜勤務／深夜残業の4列に分けて表示する（2026年9月）
+  // 所定労働時間／時間外労働／深夜労働／時間外深夜労働の4列に分けて表示する（2026年9月）
+  // 見出しは2行（T_COL）になるため、4列に少し幅を足し、備考を同じ分だけ詰めた（追加修正⑪）
   const cols=showTravel?[
     {k:"date",label:"日付",w:5.5,cls:"c-nowrap"},
     {k:"store",label:"店舗",w:7,cls:"c-wrap"},
@@ -1171,11 +1203,11 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
     {k:"out",label:"退勤",w:5,cls:"c-nowrap"},
     {k:"brk",label:"休憩",w:9.5,cls:"c-wrap"},
     {k:"trv",label:"移動",w:8.5,cls:"c-wrap"},
-    {k:"note",label:"備考",w:10,cls:"c-wrap"},
-    {k:"normal",label:"所定勤務",w:6,cls:"c-nowrap"},
-    {k:"otOnly",label:"通常残業",w:6,cls:"c-nowrap"},
-    {k:"lnOnly",label:"深夜勤務",w:6,cls:"c-nowrap"},
-    {k:"lnOt",label:"深夜残業",w:6,cls:"c-nowrap"},
+    {k:"note",label:"備考",w:8.5,cls:"c-wrap"},
+    {k:"normal",label:T_COL.normal,w:6.4,cls:"c-nowrap"},
+    {k:"otOnly",label:T_COL.otOnly,w:6.4,cls:"c-nowrap"},
+    {k:"lnOnly",label:T_COL.lnOnly,w:6.4,cls:"c-nowrap"},
+    {k:"lnOt",label:T_COL.lnOt,w:6.4,cls:"c-nowrap"},
     {k:"st",label:"状態",w:showPay?8:14.5,cls:"c-wrap"},
     ...(showPay?[{k:"pay",label:"日給(円)",w:6.5,cls:"c-nowrap c-right"}]:[])
   ]:[
@@ -1184,11 +1216,11 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
     {k:"in",label:"出勤",w:5.5,cls:"c-nowrap"},
     {k:"out",label:"退勤",w:5.5,cls:"c-nowrap"},
     {k:"brk",label:"休憩",w:10.5,cls:"c-wrap"},
-    {k:"note",label:"備考",w:11,cls:"c-wrap"},
-    {k:"normal",label:"所定勤務",w:6.5,cls:"c-nowrap"},
-    {k:"otOnly",label:"通常残業",w:6.5,cls:"c-nowrap"},
-    {k:"lnOnly",label:"深夜勤務",w:6.5,cls:"c-nowrap"},
-    {k:"lnOt",label:"深夜残業",w:6.5,cls:"c-nowrap"},
+    {k:"note",label:"備考",w:9.5,cls:"c-wrap"},
+    {k:"normal",label:T_COL.normal,w:6.9,cls:"c-nowrap"},
+    {k:"otOnly",label:T_COL.otOnly,w:6.9,cls:"c-nowrap"},
+    {k:"lnOnly",label:T_COL.lnOnly,w:6.9,cls:"c-nowrap"},
+    {k:"lnOt",label:T_COL.lnOt,w:6.9,cls:"c-nowrap"},
     {k:"st",label:"状態",w:showPay?8.5:15.5,cls:"c-wrap"},
     ...(showPay?[{k:"pay",label:"日給(円)",w:7,cls:"c-nowrap c-right"}]:[])
   ];
@@ -1201,12 +1233,13 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
       "氏名: "+emp.name+" ／ 部署: "+emp.department+wageLabel+
       " ／ 対象月: "+selectedMonth
     ),
-    e("p",{style:{fontSize:10,marginBottom:8,color:"#666"}},
-      "※ 承認済みのデータのみ集計"+
-      (isMonthly&&isAdmin?"　／　月給制のため支給額は月額固定（当月支給額: ¥"+(totalPay||0).toLocaleString()+"）":"")),
+    // 2026年9月（追加修正⑪）：上部の「※ 承認済みのデータのみ集計」は左下の合計欄に移したため削除。
+    // 月給制の支給額の案内（管理者が月給制の人を印刷するときだけ）は残す
+    isMonthly&&isAdmin&&e("p",{style:{fontSize:10,marginBottom:8,color:"#666"}},
+      "月給制のため支給額は月額固定（当月支給額: ¥"+(totalPay||0).toLocaleString()+"）"),
     e("table",{className:"print-table"},
       e("colgroup",null,...cols.map(c=>e("col",{key:c.k,style:{width:(c.w/totalW*100).toFixed(2)+"%"}}))),
-      e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k},c.label)))),
+      e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k},colHead(c.label))))),
       e("tbody",null,...allDates.map((date,i)=>{
         const r=recMap[date];
         const dayNum=i+1;
@@ -1242,17 +1275,18 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
         e("tr",{style:{fontWeight:"bold",background:"#e8e8e8"}},
           // 合計は「96時間00分」と長くなり列に収まらないため、
           // 左側にまとめて書き、金額だけ右端に出す。
-          // 内訳（所定勤務／通常残業／深夜勤務／深夜残業）は日給(円)列の有無に関わらず
+          // 内訳（所定労働時間／時間外労働／深夜労働／時間外深夜労働）は日給(円)列の有無に関わらず
           // 常に表示し、金額（¥）だけ日給(円)列が出る条件（=showPay）のときのみ付ける（13番）。
-          // 右端の合計欄は変更しない
+          // 右端の合計欄は変更しない。
+          // 2026年9月（追加修正⑪）：見出し「承認済合計」をやめ、注意書き＋労働日数から始まる5行にした
           e("td",{colSpan:cols.length-(showPay?1:0),className:"c-wrap"},
             e("div",null,
-              e("div",null,"承認済合計"),
-              e("div",{style:{fontWeight:600,marginTop:2}},"　勤務日数　"+workDays+"日"),
-              e("div",{style:{fontWeight:600}},"　所定勤務　"+mHHMM(totalNormalMinutes||0)+(showPay?"　¥"+(totalNormalPay||0).toLocaleString():"")),
-              e("div",{style:{fontWeight:600}},"　通常残業　"+mHHMM(totalOtOnlyMinutes||0)+(showPay?"　¥"+(totalOtOnlyPay||0).toLocaleString():"")),
-              e("div",{style:{fontWeight:600}},"　深夜勤務　"+mHHMM(totalLnOnlyMinutes||0)+(showPay?"　¥"+(totalLnOnlyPay||0).toLocaleString():"")),
-              e("div",{style:{fontWeight:600}},"　深夜残業　"+mHHMM(totalLnOtMinutes||0)+(showPay?"　¥"+(totalLnOtPay||0).toLocaleString():""))
+              e("div",{style:{fontWeight:400,color:"#555",fontSize:8}},APPROVED_NOTE),
+              sumLine(T_LABEL.days,workDays+"日",{marginTop:2}),
+              sumLine(T_LABEL.normal,mHHMM(totalNormalMinutes||0)+(showPay?"　¥"+(totalNormalPay||0).toLocaleString():"")),
+              sumLine(T_LABEL.otOnly,mHHMM(totalOtOnlyMinutes||0)+(showPay?"　¥"+(totalOtOnlyPay||0).toLocaleString():"")),
+              sumLine(T_LABEL.lnOnly,mHHMM(totalLnOnlyMinutes||0)+(showPay?"　¥"+(totalLnOnlyPay||0).toLocaleString():"")),
+              sumLine(T_LABEL.lnOt,mHHMM(totalLnOtMinutes||0)+(showPay?"　¥"+(totalLnOtPay||0).toLocaleString():""))
             )
           ),
           ...(showPay?[e("td",{key:"total",className:"c-nowrap c-right",style:{verticalAlign:"top"}},
@@ -1325,8 +1359,11 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   const me=currentUser?.name||"";
 
   // 2026年9月（重さ対策）：操作履歴は保存と同じ通信で送る（以前は保存→履歴の2回通信していた）
+  // 2026年9月（追加修正⑩）：店舗ごとに締められるようになったため、「全員が締まっているか」ではなく
+  // 「そのスタッフの月が締まっているか」で操作の可否を判定する
+  const empClosed=empId=>isAdminClosed(empId,approvalMonth);
   const approve=async(empId,date)=>{
-    if(mgrClosed){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
+    if(empClosed(empId)){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
     const rec=records[empId]?.[date];if(!rec)return;
     // 承認者と承認日時を残す。届いたことを確認してから知らせる
     const ok=await saveRecord({...rec,status:"approved",approvedBy:me,approvedAt:new Date().toISOString()},makeLog(me,"承認",nameOfStaff(empId),date,""));
@@ -1336,7 +1373,7 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   // 差戻しは理由の入力が必須。まず理由を聞いてから実行する
   const [rejectTarget,setRejectTarget]=useState(null);
   const askReject=(empId,date)=>{
-    if(mgrClosed){showToast("月締め済みです。月締めを解除してから差戻ししてください。","warning");return;}
+    if(empClosed(empId)){showToast("月締め済みです。月締めを解除してから差戻ししてください。","warning");return;}
     setRejectTarget({empId,date});
   };
   const doReject=async(reason)=>{
@@ -1351,8 +1388,8 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     showToast("差し戻しました","warning");
   };
   const approveAll=async()=>{
-    if(mgrClosed){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
     if(!selEmp){showToast("スタッフを選択してください","warning");return;}
+    if(empClosed(selEmp.id)){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
     const targets=selRecs.filter(r=>r.status==="submitted");
     if(targets.length===0){showToast("承認待ちのデータがありません","warning");return;}
     const at=new Date().toISOString();
@@ -1399,6 +1436,74 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     }
     showToast(approvalMonth+"分を月締めしました");
   };
+  // ===== 店舗ごとの月締め（2026年9月・追加修正⑩） =====
+  // ・管理者（店長）：担当店舗だけ締められる（本人確認のパスワードは不要。GAS側で「管理者か」「担当店舗か」を確認する）
+  // ・オーナー：店舗ごとにも、全員一括でも締められる（今までどおりパスワードで本人確認）
+  // ・解除はオーナーだけ
+  // 店舗の対象者：その店舗に所属するスタッフ。管理者が自分の店舗を締めるときは自分自身も含める
+  //（一覧には自分は出ないが、店舗を締めるなら自分の分も一緒に締まるのが自然なため。自分の承認待ちは他の管理者かオーナーに承認してもらう）
+  const storeMembers=store=>{
+    const m=targetStaff.filter(emp=>emp.store===store);
+    if(!isOwner&&currentUser.store===store&&!m.some(x=>x.id===currentUser.id))m.push(currentUser);
+    return m;
+  };
+  const storeState=store=>{
+    const members=storeMembers(store);
+    const closedN=members.filter(emp=>isAdminClosed(emp.id,approvalMonth)).length;
+    const recsOf=emp=>Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth));
+    const pending=members.reduce((n,emp)=>n+recsOf(emp).filter(r=>r.status==="submitted").length,0);
+    const rejected=members.reduce((n,emp)=>n+recsOf(emp).filter(r=>r.status==="rejected").length,0);
+    return {members,closedN,allClosed:members.length>0&&closedN===members.length,pending,rejected};
+  };
+  const [storeConfirm,setStoreConfirm]=useState(null);   // 確認中の店舗名
+  const [storeBusy,setStoreBusy]=useState(null);         // 送信中の店舗名
+  const doStoreClose=async(store,passHash)=>{
+    const st=storeState(store);
+    if(st.pending>0){showToast(`${store}に承認待ちが${st.pending}件あります。すべて承認または差戻ししてから月締めしてください。`,"warning");setStoreConfirm(null);return;}
+    if(st.rejected>0){showToast(`${store}に差戻し中が${st.rejected}件あります。修正・承認後に月締めしてください。`,"warning");setStoreConfirm(null);return;}
+    setStoreBusy(store);
+    const ok=await setAdminClosedMany(st.members.map(emp=>emp.id),approvalMonth,me,currentUser.id,passHash,
+      makeLog(me,"月締め","（"+store+"・対象"+st.members.length+"名）",approvalMonth+"（月締め）",""));
+    setStoreBusy(null);setStoreConfirm(null);
+    bumpRerender();
+    if(!ok){showToast(failMsg("月締めができませんでした。通信環境を確認してもう一度お試しください。"),"warning");return;}
+    showToast(store+"の"+approvalMonth+"分を月締めしました");
+  };
+  const doStoreUnclose=async(store,passHash)=>{
+    const st=storeState(store);
+    setStoreBusy(store);
+    const ok=await unsetAdminClosedMany(st.members.map(emp=>emp.id),approvalMonth,currentUser.id,passHash,
+      makeLog(me,"月締め解除","（"+store+"・対象"+st.members.length+"名）",approvalMonth+"（月締め）",""));
+    setStoreBusy(null);
+    bumpRerender();
+    if(!ok){showToast(failMsg("解除ができませんでした。パスワードが正しいか、通信環境を確認してもう一度お試しください。"),"warning");return;}
+    showToast(store+"の月締めを解除しました。スタッフは修正できます。","warning");
+  };
+  // 店舗名の右側に出す、締めの状態とボタン
+  const storeCloseControls=store=>{
+    const st=storeState(store);
+    const busy=storeBusy===store;
+    const canClose=isOwner||managedStores.includes(store);
+    if(st.allClosed){
+      return e("div",{style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}},
+        e("span",{style:{fontSize:11,fontWeight:700,color:"#065f46",background:"#d1fae5",padding:"3px 10px",borderRadius:20}},"🔒 月締め済み"),
+        isOwner&&e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"3px 10px"},disabled:busy,onClick:()=>setShowOwnerPwModal({kind:"uncloseStore",store})},busy?"解除中…":"解除")
+      );
+    }
+    if(!canClose)return null;
+    if(storeConfirm===store){
+      return e("div",{style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",background:"#fff3cd",padding:"4px 10px",borderRadius:8}},
+        e("span",{style:{fontSize:11.5,fontWeight:700,color:"#1e3a5f"}},store+"の"+approvalMonth+"分（"+st.members.length+"名）を月締めしますか？"),
+        e("button",{className:"btn btn-success",style:{fontSize:11,padding:"3px 10px"},disabled:busy,
+          onClick:()=>{ if(isOwner)setShowOwnerPwModal({kind:"closeStore",store}); else doStoreClose(store,null); }},busy?"送信中…":"はい・月締めする"),
+        e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"3px 10px"},disabled:busy,onClick:()=>setStoreConfirm(null)},"キャンセル")
+      );
+    }
+    return e("div",{style:{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}},
+      st.closedN>0&&e("span",{style:{fontSize:11,fontWeight:700,color:"#92400e"}},"⚠ 未締め"+(st.members.length-st.closedN)+"名"),
+      e("button",{className:"btn btn-primary",style:{fontSize:11,padding:"3px 10px"},disabled:busy,onClick:()=>setStoreConfirm(store)},"🔒 この店舗を月締め")
+    );
+  };
   // 月締め解除：全スタッフのフラグを外してスタッフが修正できる状態に
   const [unclosing,setUnclosing]=useState(false);
   const doMgrUnclose=async(passHash)=>{
@@ -1425,13 +1530,15 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     // 月締め・解除の本人確認（オーナーのみ）
     showOwnerPwModal&&e(OwnerPasswordModal,{
       currentUser,
-      actionLabel:showOwnerPwModal==="close"?"月締め":"月締め解除",
+      actionLabel:(showOwnerPwModal==="close"||showOwnerPwModal.kind==="closeStore")?"月締め":"月締め解除",
       onCancel:()=>setShowOwnerPwModal(null),
       onConfirm:async(passHash)=>{
         const action=showOwnerPwModal;
         setShowOwnerPwModal(null);
         if(action==="close")await doMgrClose(passHash);
-        else await doMgrUnclose(passHash);
+        else if(action==="unclose")await doMgrUnclose(passHash);
+        else if(action.kind==="closeStore")await doStoreClose(action.store,passHash);
+        else if(action.kind==="uncloseStore")await doStoreUnclose(action.store,passHash);
       }
     }),
     // 管理者月締めバナー（締める・解除するのはオーナーのみ。店長・管理者には状態だけ見せる）
@@ -1439,7 +1546,7 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
       ?e("div",{style:{background:"#d1fae5",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}},
         e("span",{style:{fontSize:14,fontWeight:700,color:"#065f46"}},"🔒 "+approvalMonth+"分 月締め済み"),
         isOwner
-          ?e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 12px"},disabled:unclosing,onClick:()=>setShowOwnerPwModal("unclose")},unclosing?"解除中…":"月締めを解除")
+          ?e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 12px"},disabled:unclosing,onClick:()=>setShowOwnerPwModal("unclose")},unclosing?"解除中…":"全員分の月締めを解除")
           :e("span",{style:{fontSize:11,color:"#065f46",fontWeight:600}},"解除はオーナーのみ行えます")
       )
       :showCloseConfirm
@@ -1448,15 +1555,14 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
           e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},disabled:closing,onClick:()=>setShowOwnerPwModal("close")},closing?"送信中…":"はい・月締めする"),
           e("button",{className:"btn btn-outline",style:{fontSize:12,padding:"6px 16px"},disabled:closing,onClick:()=>setShowCloseConfirm(false)},"キャンセル")
         )
-        :e("div",{style:{background:partiallyClosed?"#fff3cd":"#f8faff",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}},
+        :e("div",{style:{background:"#f8faff",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}},
           partiallyClosed
-            // 一部だけ締まっている状態（本来は起きないが、以前の方式で通信の一部が失敗した場合など）を知らせる
-            ?e("span",{style:{fontSize:12,color:"#92400e",fontWeight:700}},
-              "⚠ "+approvalMonth+"分は一部のスタッフだけ月締めされています（未締め："+notClosedStaff.length+"名："+notClosedStaff.map(x=>x.name).join("・")+"）。"+(isOwner?"「月締め」を押すと全員分がそろいます。":"オーナーに月締めをご依頼ください。"))
-            :e("span",{style:{fontSize:12,color:"#64748b"}},isOwner?"月末に全員の承認が完了したら月締めしてください":"月末に全員の承認が完了したら、オーナーが月締めを行います"),
+            // 店舗ごとに締められるため、一部だけ締まっている状態は普通に起こる。未締めの人数を状態として示す
+            ?e("span",{style:{fontSize:12,color:"#64748b"}},
+              approvalMonth+"分：締め済み"+(targetStaff.length-notClosedStaff.length)+"名／未締め"+notClosedStaff.length+"名（店舗名の右のボタンで店舗ごとに締められます）")
+            :e("span",{style:{fontSize:12,color:"#64748b"}},isOwner?"月末に承認が完了したら、店舗ごと（店舗名の右のボタン）または全員一括で月締めしてください":"月末に承認が完了したら、店舗名の右のボタンで担当店舗を月締めしてください（解除はオーナーのみ）"),
           e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
-            isOwner&&e("button",{className:"btn btn-primary",style:{fontSize:13},onClick:()=>setShowCloseConfirm(true)},"🔒 "+approvalMonth+"分を月締め"),
-            // 一部だけ締まっているときは、いったん全員分を解除して整え直す道も用意する
+            isOwner&&e("button",{className:"btn btn-primary",style:{fontSize:13},onClick:()=>setShowCloseConfirm(true)},"🔒 "+approvalMonth+"分を全員一括で月締め"),
             isOwner&&partiallyClosed&&e("button",{className:"btn btn-outline",style:{fontSize:12},disabled:unclosing,onClick:()=>setShowOwnerPwModal("unclose")},unclosing?"解除中…":"全員分の月締めを解除")
           )
         ),
@@ -1471,9 +1577,12 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
       // スタッフ選択（店舗ごとに見出しを付けて並べる）
     e("div",{style:{marginBottom:16}},
       ...groupByStore(targetStaff).map(([store,list])=>e("div",{key:store,style:{marginBottom:12}},
-        e("div",{style:{fontSize:11.5,fontWeight:700,color:"#64748b",background:"#f1f5f9",
-          borderRadius:6,padding:"4px 10px",marginBottom:6,display:"inline-block"}},
-          store+"（"+list.length+"名）"),
+        e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}},
+          e("div",{style:{fontSize:11.5,fontWeight:700,color:"#64748b",background:"#f1f5f9",
+            borderRadius:6,padding:"4px 10px",display:"inline-block"}},
+            store+"（"+list.length+"名）"),
+          storeCloseControls(store)
+        ),
         e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
       list.map(emp=>{
         const empMonthRecs=Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth));
@@ -1498,11 +1607,11 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     selEmp&&e("div",null,
       e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}},
         e("div",{style:{fontWeight:700,fontSize:14,color:"#1e3a5f"}},selEmp.name+" の"+approvalMonth+"の勤怠"),
-        selRecs.filter(r=>r.status==="submitted").length>0&&e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},onClick:approveAll},"✓ 承認待ちを一括承認")
+        selRecs.filter(r=>r.status==="submitted").length>0&&!empClosed(selEmp.id)&&e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},onClick:approveAll},"✓ 承認待ちを一括承認")
       ),
       e("div",{style:{overflowX:"auto"}},
       e("table",{className:"table",style:{fontSize:13}},
-        e("thead",null,e("tr",null,["日付","店舗","出勤","退勤","休憩",...(showTravel?["移動"]:[]),"備考","実働","状態","操作"].map(h=>e("th",{key:h},h)))),
+        e("thead",null,e("tr",null,["日付","店舗","出勤","退勤","休憩",...(showTravel?["移動"]:[]),"備考","労働時間","状態","操作"].map(h=>e("th",{key:h},h)))),
         e("tbody",null,...selRecs.map((r,i)=>{
           const calc=calcRecord({...r,hourlyWage:r.hourlyWage!=null?r.hourlyWage:(selEmp.hourlyWage??1000)});
           const hasData=r.clockIn||r.clockOut;
@@ -1525,7 +1634,7 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
               r.status==="approved"
                 ?e("div",{style:{display:"flex",gap:6}},
                   e("span",{style:{color:"#059669",fontSize:12}},"✓ 承認済"),
-                  !mgrClosed&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date)},"差戻")
+                  !empClosed(r.empId)&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date)},"差戻")
                 )
                 :r.status==="rejected"
                   ?e("div",{style:{display:"flex",gap:6}},
@@ -1551,8 +1660,8 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
                     }},"差戻取消")
                   )
                   :e("div",{style:{display:"flex",gap:6}},
-                    hasData&&e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>approve(r.empId,r.date)},"承認"),
-                    !mgrClosed&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date)},"差戻")
+                    hasData&&!empClosed(r.empId)&&e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>approve(r.empId,r.date)},"承認"),
+                    !empClosed(r.empId)&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date)},"差戻")
                   )
             )
           );
@@ -1813,11 +1922,17 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
       )
     ),
     // 統計（給与は非表示・承認済みのみ集計）
-    e("div",{className:"stat-grid no-print",style:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12,marginBottom:8}},
-      ...[{label:L("勤務日数","Work Days",isBi),val:summary.workDays+"日"},{label:L("今月勤務時間","Monthly Hours",isBi),val:mHHMM(summary.totalWork)},{label:L("時間外労働","Overtime",isBi),val:mHHMM(summary.totalOvertime)},{label:L("深夜労働","Late Night",isBi),val:mHHMM(summary.totalLateNight)}]
+    // 2026年9月（追加修正⑪）：月次一覧・印刷帳票と同じ5項目（労働日数／所定労働時間／時間外労働／深夜労働／時間外深夜労働）にそろえた。
+    // 以前の「今月勤務時間」（合計）は廃止し、「時間外労働」「深夜労働」は4区分の内訳の値（時間外かつ深夜の分は「時間外深夜労働」に分けて表示）にした
+    e("div",{className:"stat-grid no-print",style:{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12,marginBottom:8}},
+      ...[{label:L(T_LABEL.days,T_LABEL_EN.days,isBi),val:summary.workDays+"日"},
+          {label:L(T_LABEL.normal,T_LABEL_EN.normal,isBi),val:mHHMM(summary.totalNormalMinutes||0)},
+          {label:L(T_LABEL.otOnly,T_LABEL_EN.otOnly,isBi),val:mHHMM(summary.totalOtOnlyMinutes||0)},
+          {label:L(T_LABEL.lnOnly,T_LABEL_EN.lnOnly,isBi),val:mHHMM(summary.totalLnOnlyMinutes||0)},
+          {label:L(T_LABEL.lnOt,T_LABEL_EN.lnOt,isBi),val:mHHMM(summary.totalLnOtMinutes||0)}]
         .map(s=>e("div",{key:s.label,className:"stat-box"},e("div",{style:{fontSize:18,fontWeight:700,color:"#1e3a5f"}},s.val),e("div",{style:{fontSize:11,color:"#94a3b8",fontWeight:600,marginTop:4}},s.label)))
     ),
-    e("p",{className:"no-print",style:{fontSize:11,color:"#94a3b8",marginBottom:12}},"※ 承認済みのデータのみ集計"),
+    e("p",{className:"no-print",style:{fontSize:11,color:"#94a3b8",marginBottom:12}},L(APPROVED_NOTE,"Approved data only",isBi)),
     // 差戻し中の日がある場合のアラート（月締め後は非表示）
     !monthClosed&&rejectedDates.length>0&&e("div",{style:{background:"#fee2e2",borderRadius:12,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"},className:"no-print"},
       e("span",{style:{fontSize:13,fontWeight:700,color:"#991b1b"}},"⚠ 差戻し中の日があります:"),
@@ -1981,11 +2096,15 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
         })(),
         // 12時間超の警告
         calc.workMinutes>720&&e("div",{style:{background:"#fff3cd",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#856404",fontWeight:600}},
-          "⚠ 実働時間が12時間を超えています（"+mHHMM(calc.workMinutes)+"）。入力内容を確認してください。"
+          "⚠ 労働時間が12時間を超えています（"+mHHMM(calc.workMinutes)+"）。入力内容を確認してください。"
         ),
         // 計算プレビュー
-        form.clockIn&&form.clockOut&&e("div",{style:{background:"#f8faff",borderRadius:10,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}},
-          ...[{label:L("実働時間","Work Hours",isBi),val:mHHMM(calc.workMinutes)},{label:L("残業時間","Overtime",isBi),val:mHHMM(calc.overtimeMinutes),color:calc.overtimeMinutes>0?"#d97706":undefined},{label:L("深夜時間","Late Night",isBi),val:mHHMM(calc.lateNightMinutes),color:calc.lateNightMinutes>0?"#7c3aed":undefined}]
+        // 2026年9月（追加修正⑪）：実働／残業／深夜の3項目から、月次一覧と同じ4区分（所定労働時間／時間外労働／深夜労働／時間外深夜労働）に変更
+        form.clockIn&&form.clockOut&&e("div",{style:{background:"#f8faff",borderRadius:10,padding:14,marginBottom:16,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:10}},
+          ...[{label:L(T_LABEL.normal,T_LABEL_EN.normal,isBi),val:mHHMM(calc.normalMinutes||0)},
+              {label:L(T_LABEL.otOnly,T_LABEL_EN.otOnly,isBi),val:mHHMM(calc.otOnlyMinutes||0),color:calc.otOnlyMinutes>0?"#d97706":undefined},
+              {label:L(T_LABEL.lnOnly,T_LABEL_EN.lnOnly,isBi),val:mHHMM(calc.lnOnlyMinutes||0),color:calc.lnOnlyMinutes>0?"#7c3aed":undefined},
+              {label:L(T_LABEL.lnOt,T_LABEL_EN.lnOt,isBi),val:mHHMM(calc.lnOtMinutes||0),color:calc.lnOtMinutes>0?"#7c3aed":undefined}]
             .map(s=>e("div",{key:s.label,style:{textAlign:"center"}},e("div",{style:{fontSize:16,fontWeight:700,color:s.color||"#1e3a5f"}},s.val),e("div",{style:{fontSize:11,color:"#94a3b8",marginTop:2}},s.label)))
         ),
         // ボタン
@@ -2211,6 +2330,8 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
     tab==="summary"&&e("div",null,
       // 店舗ごとに見出しを付けて給与カードを並べる
       e("div",{className:"no-print",style:{marginBottom:20}},
+        // 2026年9月（追加修正⑪）：ここにも「承認済みのみ集計」の注意書きを付ける（カードの金額・日数・時間はすべて承認済みだけの集計）
+        e("p",{style:{fontSize:11,color:"#94a3b8",marginBottom:10}},APPROVED_NOTE+"（金額・"+T_LABEL.days+"・時間とも）"),
         ...groupByStore([...employees,...admins]).map(([store,list])=>e("div",{key:store,style:{marginBottom:16}},
           e("div",{style:{fontSize:12,fontWeight:700,color:"#1e3a5f",background:"#f1f5f9",
             borderRadius:6,padding:"5px 12px",marginBottom:8,display:"inline-block"}},
@@ -2224,14 +2345,16 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
                   e("div",{style:{fontSize:10,color:"#94a3b8"}},emp.store)
                 ),
                 e("div",{style:{fontSize:18,fontWeight:700,color:"#059669"}},"¥"+s.totalPay.toLocaleString()),
-                e("div",{style:{fontSize:10,color:"#94a3b8",marginTop:2}},mHHMM(s.totalWork))
+                // 労働日数と、4区分を合わせた労働時間（所定＋時間外＋深夜＋時間外深夜）
+                e("div",{style:{fontSize:10,color:"#94a3b8",marginTop:2}},T_LABEL.days+" "+s.workDays+"日　労働時間 "+mHHMM(s.totalWork))
               );
             })
           )
         ))
       ),
       selEmp&&e("div",{className:"card no-print"},
-        e("h3",{style:{fontSize:15,fontWeight:700,color:"#1e3a5f",marginBottom:12}},[...employees,...admins].find(x=>x.id===selEmp)?.name+" の月次明細"),
+        e("h3",{style:{fontSize:15,fontWeight:700,color:"#1e3a5f",marginBottom:12}},[...employees,...admins].find(x=>x.id===selEmp)?.name+" の月次明細",
+          e("span",{style:{fontSize:11,fontWeight:400,color:"#94a3b8",marginLeft:10}},APPROVED_NOTE)),
         e(MonthlyTable,{summary:getMonthlySummary(selEmp),currentUser,selectedMonth,isMgrClosed:isAdminClosed(selEmp,selectedMonth)})
       ),
       // 印刷対象：スタッフ選択中はその1人だけ、未選択なら全員（1人1ページ）
@@ -2766,12 +2889,12 @@ function App(){
     const emp=[...employees,...admins].find(x=>x.id===empId);
     const allDays=Object.values(records[empId]||{}).filter(r=>r.date?.startsWith(selectedMonth));
     let tw=0,to=0,tp=0,tl=0,wd=0;
-    // 印刷帳票（13番）の内訳用：所定勤務／通常残業／深夜勤務／深夜残業の月合計（分・円）
+    // 印刷帳票（13番）の内訳用：所定労働時間／時間外労働／深夜労働／時間外深夜労働の月合計（分・円）
     let tNormalM=0,tNormalP=0,tOtOnlyM=0,tOtOnlyP=0,tLnOnlyM=0,tLnOnlyP=0,tLnOtM=0,tLnOtP=0;
     const dd=allDays.map(r=>{
       // 保存時に記録した時給を優先（後から時給変更しても過去月は変わらない）
       const c=calcRecord({...r,hourlyWage:r.hourlyWage!=null?r.hourlyWage:(emp?.hourlyWage??1000)});
-      // 給与・勤務日数は承認済みのみカウント
+      // 給与・労働日数は承認済みのみカウント
       if(r.status==="approved"){
         tw+=c.workMinutes;to+=c.overtimeMinutes;tp+=c.pay;tl+=c.lateNightMinutes;wd++;
         tNormalM+=c.normalMinutes;tNormalP+=c.normalPay;
@@ -2781,7 +2904,7 @@ function App(){
       }
       return{...r,...c};
     });
-    // 月給制：勤務日数が1日以上あれば固定の月給額。日給は表示しない
+    // 月給制：労働日数が1日以上あれば固定の月給額。日給は表示しない
     const isMonthly=emp?.payType==="monthly";
     const monthlyPay=isMonthly?(wd>0?(emp?.monthlyWage||0):0):tp;
     return{emp,days:dd.sort((a,b)=>a.date>b.date?1:-1),totalWork:tw,totalOvertime:to,totalPay:monthlyPay,totalLateNight:tl,workDays:wd,isMonthly,
@@ -2816,7 +2939,7 @@ function App(){
           color:"#991b1b",fontSize:12,fontWeight:700,cursor:reloading?"default":"pointer",fontFamily:"inherit"}},
         reloading?"読み込み中…":"再読み込み")
     ),
-    toast&&e("div",{className:`toast-center toast-center-${toast.type}`},
+    toast&&e("div",{className:`toast-center toast-center-${toast.type} no-print`},
       e("div",{style:{fontSize:20,marginBottom:8}},toast.type==="warning"?"⚠️":"✅"),
       toast.msg
     ),
@@ -2870,7 +2993,7 @@ function App(){
           color:"#991b1b",fontSize:12,fontWeight:700,cursor:reloading?"default":"pointer",fontFamily:"inherit"}},
         reloading?"読み込み中…":"再読み込み")
     ),
-    toast&&e("div",{className:`toast-center toast-center-${toast.type}`},
+    toast&&e("div",{className:`toast-center toast-center-${toast.type} no-print`},
       e("div",{style:{fontSize:20,marginBottom:8}},toast.type==="warning"?"⚠️":"✅"),
       toast.msg
     ),
