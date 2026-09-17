@@ -242,9 +242,8 @@ function shortDateLabel(dateStr){
 
 // バイリンガル対象スタッフID（SAWAN・OBIDOS）
 const BILINGUAL_IDS=[13,14];
-// 建設部門（移動時間の対象）。モノレール所属者は店舗名でも判定されるため、
-// 所属が変わっても対応できるよう、ここは補助的な指定にとどめる
-const CONSTRUCTION_IDS=[1,2,13,14,101,102,103,104,105,106,107,111,113,116];
+// ※2026年9月・追加修正⑫：以前ここにあった CONSTRUCTION_IDS（建設部門スタッフのID固定リスト）は廃止。
+//   移動時間を実働から引くかどうかは「その日の店舗がモノレールか」だけで判定する（GAS側・確定仕様と同じ）
 // ラベル定義（日本語 / English）
 function L(ja,en,isBi){return isBi?`${ja} / ${en}`:ja;}
 function loadLS(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}}
@@ -645,9 +644,12 @@ function calcRecord(rec){
 function mHHMM(m){return `${Math.floor(m/60)}時間${String(m%60).padStart(2,"0")}分`}
 
 // ===== 共通ヘルパー（同じ判定・整形が各所で必要なためまとめる） =====
-// モノレール勤務か（移動時間の対象になるか）
+// モノレール勤務か（移動時間の対象になるか）。
+// 2026年9月・追加修正⑫：「モノレールを選んだ日だけ」に統一（土木など他の店舗では引かない）。
+// 以前は建設部門スタッフ（ID固定リスト）なら店舗に関係なく引いていて、GAS側（店舗名だけで判定）と食い違っていた。
+// empId は互換のため受け取るだけで判定には使わない
 function isMonorailWork(empId,store){
-  return CONSTRUCTION_IDS.includes(empId)||store==="モノレール";
+  return store==="モノレール";
 }
 // 「移動」列を表示するか（対象スタッフ、またはその月に移動の記録がある）
 function needTravelCol(emp,recs){
@@ -885,7 +887,8 @@ function HelpModal({isAdmin,isOwner,onClose}){
       h(7,"オーナーの操作"),
       qa("パスワードを忘れたと言われた","従業員設定から、その人の「PWリセット」を押すと初期パスワードに戻ります。"),
       qa("スタッフが辞めた","従業員設定から削除できます。過去の勤怠記録は残ります。"),
-      qa("時給が変わった",["従業員設定の「編集」から変更します。",e("b",{key:"b"},"過去の月の金額は変わりません"),"。"]),
+      qa("時給が変わった",["従業員設定の「編集」から変更します。保存するとき「何月分から」を選ぶと、",e("b",{key:"b"},"その月以降の記録（承認済みの日も含む）が新しい時給で計算し直されます"),"（初期値は当月）。",e("br",{key:"1"}),
+         "月締め済みの月と、それより前の月の金額は変わりません。月給制の方には関係ありません。"]),
       qa("管理者を増やしたい",
         ["従業員設定で役割を「管理者」に変更し、担当店舗を選びます。",e("br",{key:"1"}),e("br",{key:"2"}),
          "同じ店舗に管理者が2人いると",e("b",{key:"3"},"お互いの勤怠を承認し合えます"),"。"]),
@@ -1066,7 +1069,7 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
   // 金額は管理者・オーナーのみ（一般スタッフは不可）
   const canSeePay=currentUser.role==="admin"||currentUser.role==="superadmin";
   const showPay=canSeePay&&!isMonthly;
-  // 移動列：建設部門スタッフ、またはその月に移動時間の記録が1件でもあれば表示
+  // 移動列：モノレール所属スタッフ、またはその月に移動時間の記録が1件でもあれば表示
   const targetEmp=summary.emp||currentUser;
   const showTravel=needTravelCol(targetEmp,days);
 
@@ -1339,7 +1342,7 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     const r=records[selEmp.id]?.[date];
     return r?{...r,empName:selEmp.name,empStore:selEmp.store}:{empId:selEmp.id,date,empName:selEmp.name,empStore:selEmp.store,status:null,clockIn:"",clockOut:""};
   }):[];
-  // 移動列：建設部門スタッフ、またはその月に移動時間の記録があれば表示
+  // 移動列：モノレール所属スタッフ、またはその月に移動時間の記録があれば表示
   const showTravel=needTravelCol(selEmp,selRecs);
 
   // 全スタッフの承認待ち件数
@@ -1704,8 +1707,8 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   const [showHelp,setShowHelp]=useState(false);
   const [selectedStore,setSelectedStore]=useState(currentUser.store||"");
   const allStores=ALL_STORES; // 部署に関係なく全店舗から選択可能（他店舗ヘルプ勤務に対応）
-  // 建設部門スタッフ、またはその日の対象店舗がモノレールなら移動時間を入力可能
-  const isConstruction=isMonorailWork(currentUser.id,currentUser.store)||selectedStore==="モノレール";
+  // その日の対象店舗がモノレールのときだけ移動時間を入力可能（2026年9月・追加修正⑫：所属による判定を廃止）
+  const isConstruction=isMonorailWork(currentUser.id,selectedStore);
   // 承認済みの日のみ対象店舗を変更不可（承認待ち・差戻し中は修正できる）
   const storeLocked=(records[currentUser.id]?.[editDate]||{}).status==="approved";
   // 同日に別店舗の出勤がある場合の入力欄
@@ -1992,7 +1995,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
             canEdit&&form.breaks.length>1&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,breaks:f.breaks.filter((_,j)=>j!==i)})),style:{fontSize:12,width:24,height:24,borderRadius:"50%",border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:700}},"×")
           ))
         ),
-        // 移動時間（建設部門のみ）
+        // 移動時間（モノレールを選んだ日のみ）
         isConstruction&&e("div",{style:{marginBottom:14}},
           e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
             e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700}},L("移動時間","Travel Time",isBi)),
@@ -2213,6 +2216,12 @@ function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,s
 function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
   const [ed,setEd]=useState(false);
   const [form,setForm]=useState({...emp});
+  // 時給を変えたとき、何月分の記録から新しい時給で計算し直すか（2026年9月・追加修正⑬）
+  //   thisMonth＝当月分から（初期値）／prevMonth＝前月分から／none＝過去の記録は書き換えない
+  const [wageFrom,setWageFrom]=useState("thisMonth");
+  const thisMonth=monthKeyOf(new Date()),prevMonth=addMonths(thisMonth,-1);
+  const monthJa=m=>{const [y,mo]=m.split("-");return `${y}年${Number(mo)}月`;};
+  const wageChanged=(form.payType||"hourly")!=="hourly"?false:(emp.payType!=="monthly"&&emp.hourlyWage!=null&&Number(form.hourlyWage)!==Number(emp.hourlyWage));
   const roleLabel={employee:"一般",admin:"管理者",superadmin:"オーナー"};
   const roleBg={employee:"#e8f0fe",admin:"#1e3a5f",superadmin:"#7c3aed"};
   const roleColor={employee:"#1e3a5f",admin:"white",superadmin:"white"};
@@ -2236,7 +2245,13 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
       e("select",{value:form.payType||"hourly",onChange:ev=>setForm(f=>({...f,payType:ev.target.value})),className:"input-field",style:{padding:"4px 6px",width:80,marginBottom:4,fontSize:11}},e("option",{value:"hourly"},"時給"),e("option",{value:"monthly"},"月給")),
       (form.payType==="monthly")
         ?e("input",{type:"number",value:form.monthlyWage||0,onChange:ev=>setForm(f=>({...f,monthlyWage:Number(ev.target.value)})),className:"input-field",style:{padding:"5px 8px",width:110},min:0})
-        :e("input",{type:"number",value:form.hourlyWage,onChange:ev=>setForm(f=>({...f,hourlyWage:Number(ev.target.value)})),className:"input-field",style:{padding:"5px 8px",width:100},min:0})
+        :e("input",{type:"number",value:form.hourlyWage,onChange:ev=>setForm(f=>({...f,hourlyWage:Number(ev.target.value)})),className:"input-field",style:{padding:"5px 8px",width:100},min:0}),
+      // 時給が変わっているときだけ、「何月分から計算し直すか」を選べる
+      wageChanged&&e("select",{value:wageFrom,onChange:ev=>setWageFrom(ev.target.value),className:"input-field",style:{padding:"4px 6px",width:170,marginTop:4,fontSize:11},title:"新しい時給で計算し直す月"},
+        e("option",{value:"thisMonth"},monthJa(thisMonth)+"分から反映"),
+        e("option",{value:"prevMonth"},monthJa(prevMonth)+"分から反映"),
+        e("option",{value:"none"},"過去の記録は書き換えない")
+      )
     ),
     // 担当店舗（管理者・オーナーのみ複数選択）
     e("td",null,
@@ -2253,7 +2268,7 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
       e("input",{type:"checkbox",checked:form.bilingual||false,onChange:ev=>setForm(f=>({...f,bilingual:ev.target.checked}))})
     ),
     e("td",null,e("div",{style:{display:"flex",gap:6}},
-      e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{onSave(form);setEd(false);}},"保存"),
+      e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{onSave(form,{wageFrom:wageChanged?(wageFrom==="prevMonth"?prevMonth:wageFrom==="none"?null:thisMonth):null});setEd(false);}},"保存"),
       e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 10px"},onClick:()=>setEd(false)},"取消")
     ))
   );
@@ -2278,7 +2293,7 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
   );
 }
 // ===== ADMIN DASHBOARD (オーナーのみ) =====
-function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView}){
+function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView,applyWage}){
   const [tab,setTab]=useState("summary");
   const [selEmp,setSelEmp]=useState(null);
   const isSuperAdmin=currentUser?.role==="superadmin";
@@ -2378,7 +2393,7 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
                   emp.store+"（"+arr.filter(x=>x.store===emp.store).length+"名）"))
             : null,
           e(EmployeeRow,{key:emp.id,emp,isSuperAdmin,
-          onSave:upd=>{
+          onSave:(upd,opt)=>{
             const lid=String(upd.loginId||"").trim().toLowerCase();
             if(!lid){showToast("ログインIDを入力してください","warning");return;}
             const dup=[...employees,...admins].some(x=>x.id!==upd.id&&String(x.loginId||"").toLowerCase()===lid);
@@ -2416,6 +2431,10 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
             // （更新しないと、変更前の時給などが勤怠に記録されてしまう）
             if(currentUser&&upd.id===currentUser.id)setCurrentUser(upd);
             showToast(upd.name+" を更新しました");
+            // 時給が変わった（時給制のまま）なら、指定月以降の記録を新しい時給で計算し直す（2026年9月・追加修正⑬）
+            // ※月給制→時給制の切り替えや、新規追加はこの対象外（当時の記録に時給が無いため）
+            const wageMoved=emp.payType!=="monthly"&&upd.payType!=="monthly"&&emp.hourlyWage!=null&&Number(upd.hourlyWage)!==Number(emp.hourlyWage);
+            if(wageMoved&&opt&&opt.wageFrom&&applyWage)applyWage(upd,opt.wageFrom,Number(emp.hourlyWage)||0);
           },
           onDelete:emp=>{
             const inAdmins=admins.some(x=>x.id===emp.id);
@@ -2824,6 +2843,39 @@ function App(){
     mark(true);
     return Promise.resolve(true);
   };
+  // 時給変更を指定月以降の記録に反映する（2026年9月・追加修正⑬）。従業員設定で時給を変えて保存したときに呼ばれる。
+  // GAS側（applyWage）がスプレッドシートの「時給」「日給」列を計算し直し、端末側の記録もそれに合わせる。
+  // 月締め済みの月はGAS側で書き換えない（返事の skippedClosed に月が入る）。履歴は同じ通信で「時給変更」として残す。
+  const applyWage=async(emp,fromMonth,oldWage)=>{
+    const newWage=Number(emp.hourlyWage)||0;
+    const monthJa=m=>{const [y,mo]=String(m).split("-");return `${y}年${Number(mo)}月`;};
+    const log=makeLog(currentUser?.name,"時給変更",emp.name,fromMonth+"分から","¥"+oldWage.toLocaleString()+" → ¥"+newWage.toLocaleString());
+    const r=await gasPost("applyWage",{empId:emp.id,fromMonth,hourlyWage:newWage,byId:currentUser?.id,log});
+    if(r&&/不明なaction/.test(String(r.error||""))){
+      showToast("時給は保存しましたが、過去の記録の計算し直しはできませんでした（GASが古い版です。GASを更新してください）","warning");return false;
+    }
+    if(!r||r.success===false){
+      showToast(r&&r.refused?String(r.error||""):"時給は保存しましたが、"+monthJa(fromMonth)+"分以降の記録の計算し直しができませんでした。通信環境を確認して、もう一度「編集」→「保存」してください。","warning");return false;
+    }
+    // 端末側の記録もスプレッドシートと同じ時給にそろえる（月締め済みの月・時給の無い日はそのまま）
+    setRecords(prev=>{
+      const mine=prev[emp.id];if(!mine)return prev;
+      const nx={...mine};let changed=false;
+      Object.keys(mine).forEach(d=>{
+        const m=String(d).slice(0,7);const rr=mine[d];
+        if(m<fromMonth||!rr||rr.hourlyWage==null||isAdminClosed(emp.id,m)||Number(rr.hourlyWage)===newWage)return;
+        nx[d]={...rr,hourlyWage:newWage};changed=true;
+      });
+      return changed?{...prev,[emp.id]:nx}:prev;
+    });
+    const skipped=r.skippedClosed||[];
+    const msg=`${emp.name} の${monthJa(fromMonth)}分以降 ${r.updated||0}日分を時給 ¥${newWage.toLocaleString()} で計算し直しました`+(skipped.length?`（月締め済みの${skipped.map(monthJa).join("・")}は変更なし）`:"");
+    // スタッフ情報の保存の知らせ（3秒で消える）と重なって読めなくなるのを防ぐため、その保存が終わるのを待ってから、少し長め（7秒）に表示する
+    for(let i=0;i<40&&staffSyncing.current;i++)await new Promise(res=>setTimeout(res,250));
+    setToast({msg,type:"success"});setTimeout(()=>setToast(t=>t&&t.msg===msg?null:t),7000);
+    afterLogResult(r,log);
+    return true;
+  };
   // まとめて保存する。何件届いたかを返す
   // 2026年9月（重さ対策）：1回の通信（saveRecordsBatch）でまとめて送る。logs は recs と同じ並びで履歴も同時に書く。
   // 古いGAS（まとめて処理に未対応）のときは、従来どおり1件ずつ送る。
@@ -2980,7 +3032,7 @@ function App(){
     e("div",{style:{maxWidth:1100,margin:"0 auto",padding:"24px 20px"}},
       e("div",null,
           (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView,closesVersion,ensureMonthLoaded}),
-          (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,queueStaffOp,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView,closesVersion})
+          (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,queueStaffOp,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView,closesVersion,applyWage})
         )
     ),
     // スプレッドシートから読めなかったときの警告
