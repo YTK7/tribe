@@ -177,6 +177,17 @@ const sortByStore = list => [...list].sort((a,b)=>{
   const d = storeOrder(a.store) - storeOrder(b.store);
   return d !== 0 ? d : String(a.name).localeCompare(String(b.name), "ja");
 });
+// 社員番号（2026年9月・追加修正⑱）。数字のみ。未設定は null
+const normEmpNo = v => (v == null || String(v).trim() === "" || !Number.isFinite(Number(v))) ? null : Number(v);
+// 社員番号順（未設定の人は最後、その中は店舗順→氏名順）。全員分の印刷で使う
+const sortByEmpNo = list => [...list].sort((a,b)=>{
+  const na = normEmpNo(a.empNo), nb = normEmpNo(b.empNo);
+  if (na != null && nb != null) return na - nb;
+  if (na != null) return -1;
+  if (nb != null) return 1;
+  const d = storeOrder(a.store) - storeOrder(b.store);
+  return d !== 0 ? d : String(a.name).localeCompare(String(b.name), "ja");
+});
 // スタッフを店舗ごとにまとめる（[店舗名, その店舗の人たち] の配列を返す）
 const groupByStore = list => {
   const sorted = sortByStore(list);
@@ -890,7 +901,7 @@ function HelpModal({isAdmin,isOwner,onClose}){
     isOwner&&e("div",null,
       h(6,"従業員を追加する"),
       p([tag("👥 従業員設定"),"から追加します。"]),
-      list(["氏名","ログインID（本人のメールアドレス）","部署・所属店舗","役割（一般／管理者／オーナー）","給与形態（時給／月給）と金額"],true),
+      list(["社員番号（任意・数字のみ。全員分を印刷するときの並び順に使う）","氏名","ログインID（本人のメールアドレス）","部署・所属店舗","役割（一般／管理者／オーナー）","給与形態（時給／月給）と金額"],true),
       box("own",["追加した人の初期パスワードは ",e("b",{key:"b"},INITIAL_PASSWORD)," です。本人に伝えてください。"]),
       box("warn",[e("b",{key:"b"},"ログインIDは全員バラバラにしてください。"),"同じものは登録できません。"]),
 
@@ -2182,7 +2193,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
 // ===== ADD EMPLOYEE FORM =====
 function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,showToast}){
   const [show,setShow]=useState(false);
-  const [form,setForm]=useState({name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false});
+  const [form,setForm]=useState({empNo:"",name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false});
   if(!show)return e("button",{className:"btn btn-primary",style:{fontSize:12,padding:"6px 16px",marginBottom:8},onClick:()=>setShow(true)},"＋ 従業員を追加");
   const save=()=>{
     if(!form.name.trim()){showToast("氏名を入力してください","warning");return;}
@@ -2190,9 +2201,13 @@ function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,s
     if(!lid){showToast("ログインIDを入力してください","warning");return;}
     const dup=[...employees,...admins].some(x=>String(x.loginId||"").toLowerCase()===lid);
     if(dup){showToast("このログインIDは既に使われています","warning");return;}
+    // 社員番号（任意・数字のみ）。他の人と同じ番号は登録できない
+    if(String(form.empNo||"").trim()!==""&&normEmpNo(form.empNo)==null){showToast("社員番号は数字で入力してください","warning");return;}
+    const empNo=normEmpNo(form.empNo);
+    if(empNo!=null&&[...employees,...admins].some(x=>normEmpNo(x.empNo)===empNo)){showToast("この社員番号は既に使われています","warning");return;}
     const allIds=[...employees,...admins].map(x=>x.id);
     const newId=Math.max(...allIds,200)+1;
-    const newEmp={...form,loginId:lid,id:newId,passHash:null,
+    const newEmp={...form,loginId:lid,id:newId,passHash:null,empNo:empNo==null?undefined:empNo,
       // 給与形態に合わない項目は保存しない（時給制に月給が入る等を防ぐ）
       payType:form.payType==="monthly"?"monthly":undefined,
       hourlyWage:form.payType==="monthly"?undefined:(Number(form.hourlyWage)||0),
@@ -2204,9 +2219,10 @@ function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,s
     else setAdmins(prev=>[...prev,newEmp]);
     queueStaffOp({action:"upsert",type:form.role==="employee"?"employees":"admins",staff:newEmp});
     showToast(form.name+" を追加しました（初期パスワード: "+INITIAL_PASSWORD+"）");
-    setShow(false);setForm({name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false});
+    setShow(false);setForm({empNo:"",name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false});
   };
   return e("div",{style:{background:"#f8faff",borderRadius:12,padding:16,marginBottom:16,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}},
+    e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"社員番号"),e("input",{type:"number",value:form.empNo,onChange:ev=>setForm(f=>({...f,empNo:ev.target.value})),className:"input-field",style:{padding:"6px 10px",width:90},min:0,placeholder:"任意"})),
     e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"氏名"),e("input",{value:form.name,onChange:ev=>setForm(f=>({...f,name:ev.target.value})),className:"input-field",style:{padding:"6px 10px",width:110},placeholder:"氏名"})),
     e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"ログインID"),e("input",{value:form.loginId,onChange:ev=>setForm(f=>({...f,loginId:ev.target.value})),className:"input-field",style:{padding:"6px 10px",width:170},placeholder:"example@tribe.jp"})),
     e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"部署"),e("select",{value:form.department,onChange:ev=>{const d=ev.target.value;setForm(f=>({...f,department:d,store:DEPARTMENT_STORES[d]?.[0]||""}))},className:"input-field",style:{padding:"6px 10px"}},Object.keys(DEPARTMENT_STORES).map(d=>e("option",{key:d,value:d},d)))),
@@ -2245,6 +2261,7 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
     :e("span",{style:{fontSize:11,color:"#059669",fontWeight:700}},"設定済み");
 
   if(ed)return e("tr",null,
+    e("td",null,e("input",{type:"number",value:form.empNo==null?"":form.empNo,onChange:ev=>setForm(f=>({...f,empNo:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:70},min:0,placeholder:"任意"})),
     e("td",null,e("input",{value:form.name,onChange:ev=>setForm(f=>({...f,name:ev.target.value})),onCompositionEnd:ev=>setForm(f=>({...f,name:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:100}})),
     e("td",null,e("input",{value:form.loginId||"",onChange:ev=>setForm(f=>({...f,loginId:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:160},placeholder:"example@tribe.jp"})),
     e("td",null,e("select",{value:form.department,onChange:ev=>{const d=ev.target.value;setForm(f=>({...f,department:d,store:DEPARTMENT_STORES[d]?.[0]||""}))},className:"input-field",style:{padding:"5px 8px"}},
@@ -2289,6 +2306,7 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
   );
 
   return e("tr",null,
+    e("td",{style:{fontSize:12,color:"#475569",fontWeight:600}},normEmpNo(emp.empNo)==null?"—":String(normEmpNo(emp.empNo))),
     e("td",{style:{fontWeight:600}},emp.name),
     e("td",{style:{fontSize:11,color:"#64748b"}},emp.loginId||"—"),
     e("td",{style:{fontSize:12,color:"#64748b"}},emp.department),
@@ -2386,8 +2404,9 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
           e("span",{style:{fontSize:11,fontWeight:400,color:"#94a3b8",marginLeft:10}},APPROVED_NOTE)),
         e(MonthlyTable,{summary:getMonthlySummary(selEmp),currentUser,selectedMonth,isMgrClosed:isAdminClosed(selEmp,selectedMonth)})
       ),
-      // 印刷対象：スタッフ選択中はその1人だけ、未選択なら全員（1人1ページ）
-      ...[...employees,...admins]
+      // 印刷対象：従業員選択中はその1人だけ、未選択なら全員（1人1ページ）。
+      // 2026年9月・追加修正⑱：全員分は社員番号順（未設定の人は最後に店舗順→氏名順）
+      ...sortByEmpNo([...employees,...admins])
         .filter(emp=>!selEmp||emp.id===selEmp)
         .map(emp=>e(PrintSummary,{key:emp.id,summary:getMonthlySummary(emp.id),selectedMonth,isAdmin:true}))
     ),
@@ -2398,12 +2417,12 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
       // 新規追加フォーム
       e(AddEmployeeForm,{employees,setEmployees,admins,setAdmins,queueStaffOp,showToast}),
       e("div",{style:{overflowX:"auto",marginTop:16}},e("table",{className:"table",style:{fontSize:12}},
-        e("thead",null,e("tr",null,["氏名","ログインID","部署","店舗","役割","給与","担当店舗","パスワード","英語","操作"].map(h=>e("th",{key:h},h)))),
+        e("thead",null,e("tr",null,["社員番号","氏名","ログインID","部署","店舗","役割","給与","担当店舗","パスワード","英語","操作"].map(h=>e("th",{key:h},h)))),
         e("tbody",null,...sortByStore([...employees,...admins]).flatMap((emp,i,arr)=>[
           // 店舗が変わるところで見出しを挟む
           (i===0||arr[i-1].store!==emp.store)
             ? e("tr",{key:"h-"+emp.store},
-                e("td",{colSpan:10,style:{background:"#f1f5f9",fontWeight:700,fontSize:12,color:"#1e3a5f",padding:"6px 10px"}},
+                e("td",{colSpan:11,style:{background:"#f1f5f9",fontWeight:700,fontSize:12,color:"#1e3a5f",padding:"6px 10px"}},
                   emp.store+"（"+arr.filter(x=>x.store===emp.store).length+"名）"))
             : null,
           e(EmployeeRow,{key:emp.id,emp,isSuperAdmin,
@@ -2412,7 +2431,11 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
             if(!lid){showToast("ログインIDを入力してください","warning");return;}
             const dup=[...employees,...admins].some(x=>x.id!==upd.id&&String(x.loginId||"").toLowerCase()===lid);
             if(dup){showToast("このログインIDは既に使われています","warning");return;}
-            upd={...upd,loginId:lid,
+            // 社員番号（任意・数字のみ・重複不可）。2026年9月・追加修正⑱
+            if(String(upd.empNo==null?"":upd.empNo).trim()!==""&&normEmpNo(upd.empNo)==null){showToast("社員番号は数字で入力してください","warning");return;}
+            const empNo=normEmpNo(upd.empNo);
+            if(empNo!=null&&[...employees,...admins].some(x=>x.id!==upd.id&&normEmpNo(x.empNo)===empNo)){showToast("この社員番号は既に使われています","warning");return;}
+            upd={...upd,loginId:lid,empNo:empNo==null?undefined:empNo,
               // 給与形態に合わない項目は残さない
               payType:upd.payType==="monthly"?"monthly":undefined,
               hourlyWage:upd.payType==="monthly"?undefined:(Number(upd.hourlyWage)||0),
@@ -2473,9 +2496,11 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
         e("h2",{style:{fontSize:14,marginBottom:4}},"従業員一覧"),
         e("p",{style:{fontSize:10,marginBottom:8,color:"#666"}},"出力日: "+formatDate(new Date())+" ／ 全"+([...employees,...admins].length)+"名"),
         e("table",{className:"print-table"},
-          e("colgroup",null,...[16,24,12,16,9,11,12].map((w,i)=>e("col",{key:i,style:{width:w+"%"}}))),
-          e("thead",null,e("tr",null,...["氏名","ログインID","部署","所属店舗","役割","給与","担当店舗"].map(h=>e("th",{key:h},h)))),
-          e("tbody",null,...sortByStore([...employees,...admins]).map(emp=>e("tr",{key:emp.id},
+          e("colgroup",null,...[8,15,22,11,15,8,10,11].map((w,i)=>e("col",{key:i,style:{width:w+"%"}}))),
+          e("thead",null,e("tr",null,...["社員番号","氏名","ログインID","部署","所属店舗","役割","給与","担当店舗"].map(h=>e("th",{key:h},h)))),
+          // 2026年9月・追加修正⑱：印刷用の従業員一覧も社員番号順（未設定の人は最後に店舗順→氏名順）
+          e("tbody",null,...sortByEmpNo([...employees,...admins]).map(emp=>e("tr",{key:emp.id},
+            e("td",{className:"c-nowrap c-right"},normEmpNo(emp.empNo)==null?"—":String(normEmpNo(emp.empNo))),
             e("td",{className:"c-nowrap"},emp.name),
             e("td",{className:"c-wrap"},emp.loginId||"—"),
             e("td",{className:"c-nowrap"},emp.department||"—"),
