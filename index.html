@@ -27,6 +27,14 @@ body{font-family:'Noto Sans JP','Hiragino Sans',sans-serif;background:#f0f2f5;mi
   .print-table .c-wrap{white-space:normal;word-break:break-all}
   .print-table .c-right{text-align:right}
   .print-table .row-weekend td{background:#f4f4f4}
+  /* 同日の別店舗の内訳行（追加修正⑲）。行数が多い月は文字と余白を詰めて1ページに収める（dense） */
+  .print-table .row-sub{color:#444;font-size:.94em}
+  .print-table.dense{font-size:8px}
+  .print-table.dense th,.print-table.dense td{padding:1px 2px;line-height:1.15}
+  /* 行数が多すぎて1ページに収まらない月だけ、表を途中で区切って次のページに続ける（見出し行は各ページに繰り返し印刷される） */
+  .print-table.multi{page-break-inside:auto}
+  .print-table.multi thead{display:table-header-group}
+  .print-table.multi tfoot{display:table-row-group}   /* 合計欄は最後のページに1回だけ */
   h2{font-size:11px!important;margin-bottom:2px!important}
   p{font-size:8px!important;margin-bottom:2px!important}
 }
@@ -588,6 +596,8 @@ function calcRecord(rec){
     normalMinutes:0,normalPay:0,otOnlyMinutes:0,otOnlyPay:0,
     lnOnlyMinutes:0,lnOnlyPay:0,lnOtMinutes:0,lnOtPay:0,
     normalPayRaw:0,otOnlyPayRaw:0,lnOnlyPayRaw:0,lnOtPayRaw:0};
+  // 2026年9月・追加修正⑳：店舗ごとの内訳（segs）がある日は、まず「1日の最初〜最後＋差し引く区間」の1件にまとめてから同じ計算をする（GAS側と同じ）
+  if(rec&&rec.segs&&rec.segs.length)rec=flattenSegs(rec);
   if(!rec||!rec.clockIn||!rec.clockOut)return ZERO;
   const inMin=toMin(rec.clockIn);
   let outMin=toMin(rec.clockOut);
@@ -688,6 +698,142 @@ function shortName(n){
 function rangeText(arr,fallback){
   const v=(arr||[]).filter(x=>x.start&&x.end);
   return v.length?v.map(x=>x.start+"〜"+x.end).join("/"):(fallback||"—");
+}
+// ===== 同日に別店舗の出勤がある日の内訳行（2026年9月・追加修正⑲） =====
+// 日次入力の「同日に別店舗の出勤がある」で追加した分は、備考欄に「21:00-24:00 GOLF BAR KING」の形で
+// 「 / 」区切りで保存されている（データの持ち方は変えていない。1日1件のまま）。
+// 月次一覧・印刷帳票では、備考からこの部分だけを読み取って、日付の下に「店舗名・時間帯」の行（内訳行）として表示する。
+// 手で書いた備考の文言（この形に当てはまらないもの）は、今までどおり備考欄に残す。
+// ※日次入力の「チェックを外したら備考から取り除く」処理と同じ見分け方（書式）を使っている。
+const SUB_STORE_RE=/^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})\s+(\S.*)$/;
+function splitSubStores(note){
+  const subs=[],rest=[];
+  String(note||"").split(" / ").forEach(s=>{
+    const t=s.trim();if(!t)return;
+    const m=t.match(SUB_STORE_RE);
+    if(m)subs.push({start:m[1],end:m[2],store:m[3].trim()});else rest.push(t);
+  });
+  return {subs,rest:rest.join(" / ")};
+}
+// 内訳行の店舗名は帳票と同じ簡易表示（GOLF／JP など）にし、先頭に「└」を付けて「上の日の内訳」と分かるようにする
+function subStoreLabel(store){return "└"+(STORE_ABBR[store]||store);}
+// 印刷帳票の行数（日数＋内訳行）がこれを超えたら、A4縦1ページに収まるよう表の文字を少し小さくする（追加修正⑲）。
+// 測定値（Chromium・A4縦・余白7mm）：通常の文字で45行まで、小さい文字（dense）で55行まで1ページに収まる。
+// PRINT_MULTI_ROWS を超えると1ページには収まらないので、表を途中で区切って2ページ目に続ける（区切らないと
+// 「1ページ目がほぼ白紙で、表が2ページ目から始まる」崩れ方になる）
+const PRINT_DENSE_ROWS=42;
+const PRINT_MULTI_ROWS=54;
+
+// ===== 同日に複数店舗で働いた日の内訳（segs）（2026年9月・追加修正⑳） =====
+// 新方式：1日の記録（1人1日1件のまま）に segs＝店舗ごとの内訳の配列を持たせる。
+//   1件＝{store, clockIn, clockOut, breaks, travelTimes, note, status, approvedBy, approvedAt, rejectBy, rejectAt, rejectReason}
+//   ・出勤・退勤・休憩・移動・備考は店舗ごと。状態（承認待ち／承認済／差戻し中）も店舗ごと（その店舗の担当管理者が承認する）
+//   ・日の項目（store／clockIn／clockOut／breaks／travelTimes／note／status／approvedBy／rejectReason）は内訳から組み立てる（withDayFields）
+//   ・労働時間・給与は1日まとめて計算する（calcRecord → flattenSegs）。集計に入るのは「全部の店舗が承認済み」の日だけ
+//   ・GAS側は同じ関数（normSegs／withDayFields／flattenSegs／segsDayStatus）を持っている。片方だけ直さないこと
+// 旧方式（segsなし）：今までどおり日の項目だけ。別店舗の分は備考の「HH:MM-HH:MM 店舗」（追加修正⑲の内訳行として表示）
+const MAX_SEGS=3;   // 1日に入力できる店舗数の上限（GAS側の MAX_SEGS と同じ値）
+const S_KEYS=["store","clockIn","clockOut","breaks","travelTimes","note","status","approvedBy","approvedAt","rejectBy","rejectAt","rejectReason"];
+function isMultiSeg(rec){return !!(rec&&Array.isArray(rec.segs)&&rec.segs.length>0);}
+// 記録を「店舗ごとの内訳」として返す（旧方式は日の項目そのものを1件の内訳とみなす）
+function recSegs(rec){
+  if(!rec)return [];
+  if(isMultiSeg(rec))return rec.segs;
+  return [{store:rec.store||"",clockIn:rec.clockIn||"",clockOut:rec.clockOut||"",breaks:rec.breaks||[],travelTimes:rec.travelTimes||[],
+    note:rec.note||"",status:rec.status,approvedBy:rec.approvedBy,approvedAt:rec.approvedAt,rejectBy:rec.rejectBy,rejectAt:rec.rejectAt,rejectReason:rec.rejectReason}];
+}
+const validRanges=arr=>(arr||[]).filter(x=>x&&x.start&&x.end).map(x=>({start:x.start,end:x.end}));
+function normSegs(segs){
+  if(!Array.isArray(segs)||!segs.length)return null;
+  return segs.slice(0,MAX_SEGS).map(s=>({store:String((s&&s.store)||""),clockIn:String((s&&s.clockIn)||""),clockOut:String((s&&s.clockOut)||""),
+    breaks:validRanges(s&&s.breaks),travelTimes:validRanges(s&&s.travelTimes),note:String((s&&s.note)||""),
+    status:(s&&s.status)||"submitted",approvedBy:(s&&s.approvedBy)||"",approvedAt:(s&&s.approvedAt)||"",
+    rejectBy:(s&&s.rejectBy)||"",rejectAt:(s&&s.rejectAt)||"",rejectReason:(s&&s.rejectReason)||""}));
+}
+// 日の状態：1つでも差戻し中→差戻し中／全部承認済→承認済／1つでも承認待ち→承認待ち／それ以外→下書き
+function segsDayStatus(segs){
+  const anyRej=segs.some(x=>x.status==="rejected"),anySub=segs.some(x=>x.status==="submitted"),allApp=segs.length>0&&segs.every(x=>x.status==="approved");
+  return anyRej?"rejected":allApp?"approved":anySub?"submitted":"draft";
+}
+// 記録の状態（旧方式はそのまま、新方式は内訳から決め直す）。画面の判定はできるだけこれを使う
+function effStatus(rec){return isMultiSeg(rec)?segsDayStatus(rec.segs):(rec?rec.status:undefined);}
+// 分（1440以上でも可）→"HH:MM"
+function fmtMin(m){const x=((m%1440)+1440)%1440;return String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");}
+// 内訳を時間軸（1店舗目の出勤を起点にした分）に並べる。日をまたぐ分は+1440で単調増加にする
+function segParts(segs){
+  const parts=[];let prevEnd=null;
+  segs.forEach(s=>{
+    let si=toMin(s.clockIn),so=toMin(s.clockOut);
+    if(si==null||so==null||si===so)return;
+    if(prevEnd==null)prevEnd=si;
+    while(si<prevEnd)si+=1440;
+    while(so<=si)so+=1440;
+    parts.push({s:si,e:so,seg:s});prevEnd=so;
+  });
+  return parts;
+}
+// 内訳から日の項目を組み立てた記録を返す（保存・承認・差戻しのたびに通す）
+function withDayFields(rec,segsIn){
+  const segs=normSegs(segsIn||rec.segs);
+  if(!segs)return rec;
+  const parts=segParts(segs);
+  const breaks=[],travels=[],notes=[],approvers=[],reasons=[];
+  segs.forEach(s=>{
+    breaks.push(...s.breaks);travels.push(...s.travelTimes);
+    if(s.note)notes.push(segs.length>1?s.store+": "+s.note:s.note);
+    if(s.status==="approved"&&s.approvedBy&&!approvers.includes(s.approvedBy))approvers.push(s.approvedBy);
+    if(s.status==="rejected"&&s.rejectReason)reasons.push(segs.length>1?s.store+": "+s.rejectReason:s.rejectReason);
+  });
+  for(let j=1;j<parts.length;j++){ if(parts[j].s>parts[j-1].e)breaks.push({start:fmtMin(parts[j-1].e),end:fmtMin(parts[j].s)}); }
+  const lastRej=[...segs].reverse().find(s=>s.status==="rejected");
+  return {...rec,segs,store:segs[0].store,clockIn:segs[0].clockIn,clockOut:parts.length?parts[parts.length-1].seg.clockOut:segs[segs.length-1].clockOut,
+    breaks,travelTimes:travels,note:notes.join(" / "),status:segsDayStatus(segs),
+    approvedBy:approvers.join("・")||undefined,approvedAt:segs.find(s=>s.approvedAt)?.approvedAt,
+    rejectReason:reasons.join(" / ")||undefined,rejectBy:lastRej?(lastRej.rejectBy||undefined):undefined,rejectAt:lastRej?(lastRej.rejectAt||undefined):undefined};
+}
+// 計算用：内訳を「1日の最初〜最後」の1件にまとめる。差し引く区間＝各店舗の休憩＋店舗の間の空き時間＋（店舗がモノレールの分だけ）移動時間。
+// 起点から24時間を超える分は切り捨てる（1日の勤務は24時間まで、という今までの上限と同じ）
+function flattenSegs(rec){
+  const segs=normSegs(rec.segs);
+  if(!segs)return rec;
+  const parts=segParts(segs);
+  if(!parts.length)return {...rec,segs:undefined,store:segs[0].store,clockIn:"",clockOut:"",breaks:[],travelTimes:[]};
+  const base=parts[0].s,cap=base+1440,ranges=[];
+  const addRange=(a,b)=>{ if(a>=cap)return; if(b>cap)b=cap; if(b<=a)return; ranges.push({start:fmtMin(a),end:fmtMin(b)}); };
+  const addRel=(part,list)=>(list||[]).forEach(x=>{
+    let a=toMin(x.start),b=toMin(x.end);
+    if(a==null||b==null||a===b)return;
+    while(a<part.s)a+=1440; while(b<=a)b+=1440;
+    if(a<part.s)a=part.s; if(b>part.e)b=part.e;
+    addRange(a,b);
+  });
+  parts.forEach((p,i)=>{
+    addRel(p,p.seg.breaks);
+    if(p.seg.store==="モノレール")addRel(p,p.seg.travelTimes);
+    if(i>0&&p.s>parts[i-1].e)addRange(parts[i-1].e,p.s);
+  });
+  let end=parts[parts.length-1].e; if(end>cap)end=cap;
+  return {...rec,segs:undefined,store:segs[0].store,clockIn:fmtMin(base),clockOut:fmtMin(end),breaks:ranges,travelTimes:[],breakMinutes:undefined};
+}
+// 内訳の1件を承認／差戻し等で書き換えた記録を返す（旧方式は日の項目を書き換える）。patch＝{status,approvedBy,...}
+function patchSeg(rec,idx,patch){
+  if(!isMultiSeg(rec))return {...rec,...patch};
+  const segs=rec.segs.map((s,i)=>i===idx?{...s,...patch}:s);
+  return withDayFields(rec,segs);
+}
+// 月次一覧・印刷帳票の「1日ぶんの行」を作る。
+//   新方式：店舗ごとに1行（各行に状態）。旧方式：1行目＝日の項目、2行目以降＝備考から起こした内訳行（状態は1行目に縦結合）
+//   戻り値 {rows:[{store,clockIn,clockOut,breaks,travelTimes,note,status,approver,isSub}], perRowStatus}
+function expandDayRows(r){
+  if(isMultiSeg(r)){
+    return {perRowStatus:true,rows:r.segs.map(s=>({store:s.store,clockIn:s.clockIn,clockOut:s.clockOut,breaks:s.breaks,travelTimes:s.travelTimes,
+      note:s.note,status:s.status,approver:s.status==="approved"?s.approvedBy:s.status==="rejected"?s.rejectBy:null,isSub:false}))};
+  }
+  const {subs,rest}=splitSubStores(r.note);
+  const rows=[{store:r.store,clockIn:r.clockIn,clockOut:r.clockOut,breaks:r.breaks,travelTimes:r.travelTimes,note:rest,status:r.status,
+    approver:r.status==="approved"?r.approvedBy:r.status==="rejected"?r.rejectBy:null,isSub:false,breakMinutes:r.breakMinutes}];
+  subs.forEach(s=>rows.push({store:s.store,clockIn:s.start,clockOut:s.end,breaks:null,travelTimes:null,note:"",status:null,approver:null,isSub:true}));
+  return {perRowStatus:false,rows};
 }
 // ===== 差戻し理由の入力 =====
 const REJECT_REASONS=["時刻が違う","休憩が抜けている","店舗が違う","入力もれがある","その他"];
@@ -833,11 +979,12 @@ function HelpModal({isAdmin,isOwner,onClose}){
 
     h(4,"こんなときは"),
     qa("同じ日に2つの店舗で働いた",
-      ["「同日に別店舗の出勤がある」にチェックを入れると、時間と店舗を選んで追加できます。",e("br",{key:"1"}),e("br",{key:"2"}),
-       e("b",{key:"3"},"出勤・退勤は1日の最初と最後"),"を入れてください。店舗の移動でできた空き時間は",
-       e("b",{key:"4"},"休憩に入れます"),"。",e("br",{key:"5"}),e("br",{key:"6"}),
-       "例）カリッジュ 9:00〜17:00、GOLF BAR 21:00〜24:00 の場合",e("br",{key:"7"}),
-       "出勤 9:00 ／ 退勤 24:00 ／ 休憩 17:00〜21:00"]),
+      ["備考欄の下の「＋ 同じ日に別の店舗でも働いた（店舗を追加）」を押すと、店舗②（③）の入力欄が出ます。",e("br",{key:"1"}),
+       e("b",{key:"2"},"店舗ごとに出勤・退勤・休憩・備考"),"を入れてください。店舗の移動でできた空き時間は自動で除かれるので、休憩に入れる必要はありません。",e("br",{key:"3"}),e("br",{key:"4"}),
+       "例）カリッジュ 9:00〜17:00（休憩12:00〜13:00）、GOLF BAR 21:00〜24:00 の場合",e("br",{key:"5"}),
+       "店舗① カリッジュ：出勤 9:00 ／ 退勤 17:00 ／ 休憩 12:00〜13:00",e("br",{key:"6"}),
+       "店舗② GOLF BAR：出勤 21:00 ／ 退勤 24:00",e("br",{key:"7"}),e("br",{key:"8"}),
+       "承認は店舗ごとに、その店舗の店長が行います。月次一覧・印刷では日付の下に店舗ごとの行として表示されます（労働時間は1日分まとめて計算されます）。"]),
     qa("入力を間違えた",
       [bdg("承認待ち","sub"),"のうちは直せます。直して「提出する」を押してください。",e("br",{key:"1"}),
        bdg("承認済","app"),"になったあとは直せないので、管理者に連絡してください。"]),
@@ -865,6 +1012,10 @@ function HelpModal({isAdmin,isOwner,onClose}){
        "・休憩が入っているか（長時間なのに休憩なしは要確認）",e("br",{key:"2"}),
        "・対象店舗が正しいか",e("br",{key:"3"}),
        "・出勤しているのに入力されていない日がないか"]),
+    qa("同じ日に2つの店舗で働いた日",
+      ["店舗ごとに行が分かれ、",e("b",{key:"1"},"その店舗の担当店長だけ"),"が承認・差戻しできます（オーナーは全部）。他店舗の行には「○○の店長が承認」と表示されます。",e("br",{key:"2"}),
+       "他店舗の従業員が自分の店舗で働いた日は、承認管理の「○○で働いた他店舗の従業員」に出ます。",e("br",{key:"3"}),
+       "その日の労働時間・給与は、全部の店舗の行が承認済みになって初めて集計に入ります。月締めも、その人の全部の行（他店舗の分も）が承認済みでないとできません。"]),
 
     h(2,"承認したあとの修正"),
     p([bdg("承認済","app"),"になると、本人は修正できなくなります。"]),
@@ -1141,26 +1292,42 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
         e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k,style:{padding:"6px 5px",whiteSpace:"normal",wordBreak:"break-all"}},colHead(c.label))))),
         e("tbody",null,
           days.length===0&&e("tr",null,e("td",{colSpan:cols.length,style:{textAlign:"center",color:"#94a3b8",padding:"24px"}},"データなし")),
-          ...days.map((r,i)=>{
-            const approver=r.status==="approved"?r.approvedBy:r.status==="rejected"?r.rejectBy:null;
-            return e("tr",{key:i,style:{background:r.status==="rejected"?"#fff1f2":undefined}},
-              e("td",{style:{...cellSt(cols[0]),padding:"6px 5px",fontWeight:600}},shortDateLabel(r.date)),
-              e("td",{style:{...cellSt(cols[1]),padding:"6px 5px",color:"#475569"}},r.store?(STORE_ABBR[r.store]||r.store):"—"),
-              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px"}},r.clockIn||"—"),
-              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px"}},r.clockOut||"—"),
-              e("td",{style:{...cellSt({}),padding:"6px 5px"}},rangeText(r.breaks,r.breakMinutes?r.breakMinutes+"分":"—")),
-              showTravel&&e("td",{style:{...cellSt({}),padding:"6px 5px",color:"#0369a1"}},rangeText(r.travelTimes)),
-              e("td",{style:{...cellSt({}),padding:"6px 5px"}},r.note||"—"),
-              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px",fontWeight:600}},mHHMM(r.workMinutes)),
-              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px"}},mHHMM(r.normalMinutes)),
-              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.otOnlyMinutes>0?"#d97706":"#94a3b8"}},mHHMM(r.otOnlyMinutes)),
-              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.lnOnlyMinutes>0?"#7c3aed":"#94a3b8"}},mHHMM(r.lnOnlyMinutes)),
-              e("td",{style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.lnOtMinutes>0?"#7c3aed":"#94a3b8"}},mHHMM(r.lnOtMinutes)),
-              e("td",{style:{...cellSt({}),padding:"6px 5px"}},
-                e("span",{className:`status-badge ${S_CLASS[r.status||"draft"]}`,style:{fontSize:9.5,padding:"2px 7px",whiteSpace:"nowrap"}},S_LABEL[r.status||"draft"]),
-                approver?e("span",{style:{color:"#666",marginLeft:3,whiteSpace:"nowrap"}}," "+shortName(approver)):null
-              )
-            );
+          // 2026年9月・追加修正⑲⑳：同日に別店舗の出勤がある日は、店舗ごとに1行ずつ日付の下に並べる（expandDayRows）。
+          //   新方式（segs）：各行に店舗・出勤・退勤・休憩・移動・備考・状態。日付と労働時間の5列（1日分）は縦につなげる
+          //   旧方式（備考の「HH:MM-HH:MM 店舗」）：1行目＝日の項目、2行目以降＝店舗名（└付き）と時間帯だけ。状態も縦につなげる
+          ...days.flatMap((r,i)=>{
+            const {rows,perRowStatus}=expandDayRows(r);
+            const span=rows.length;
+            const dayStatus=effStatus(r);
+            const rowBg=dayStatus==="rejected"?"#fff1f2":undefined;
+            const pad=j=>j===0?"6px 5px":"4px 5px";
+            const statusCell=(st,approver,extra)=>e("td",{style:{...cellSt({}),padding:"6px 5px"},...(extra||{})},
+              e("span",{className:`status-badge ${S_CLASS[st||"draft"]}`,style:{fontSize:9.5,padding:"2px 7px",whiteSpace:"nowrap"}},S_LABEL[st||"draft"]),
+              approver?e("span",{style:{color:"#666",marginLeft:3,whiteSpace:"nowrap"}}," "+shortName(approver)):null);
+            return rows.map((row,j)=>{
+              const sub=row.isSub;
+              const col=sub?"#64748b":undefined,dim=sub?"#94a3b8":undefined,fs=sub?10:undefined;
+              const cells=[];
+              if(j===0)cells.push(e("td",{key:"d",rowSpan:span,style:{...cellSt(cols[0]),padding:"6px 5px",fontWeight:600}},shortDateLabel(r.date)));
+              cells.push(
+                e("td",{key:"s",style:{...cellSt(cols[1]),padding:pad(j),color:col||"#475569",fontSize:fs}},sub?subStoreLabel(row.store):(row.store?(STORE_ABBR[row.store]||row.store):"—")),
+                e("td",{key:"i",style:{...cellSt({nowrap:true}),padding:pad(j),color:col,fontSize:fs}},row.clockIn||"—"),
+                e("td",{key:"o",style:{...cellSt({nowrap:true}),padding:pad(j),color:col,fontSize:fs}},row.clockOut||"—"),
+                e("td",{key:"b",style:{...cellSt({}),padding:pad(j),color:dim,fontSize:fs}},sub?"—":rangeText(row.breaks,row.breakMinutes?row.breakMinutes+"分":"—")),
+                showTravel&&e("td",{key:"t",style:{...cellSt({}),padding:pad(j),color:sub?dim:"#0369a1",fontSize:fs}},sub?"—":rangeText(row.travelTimes)),
+                e("td",{key:"n",style:{...cellSt({}),padding:pad(j),color:dim,fontSize:fs}},row.note||"—")
+              );
+              if(j===0)cells.push(
+                e("td",{key:"w",rowSpan:span,style:{...cellSt({nowrap:true}),padding:"6px 5px",fontWeight:600}},mHHMM(r.workMinutes)),
+                e("td",{key:"n1",rowSpan:span,style:{...cellSt({nowrap:true}),padding:"6px 5px"}},mHHMM(r.normalMinutes)),
+                e("td",{key:"n2",rowSpan:span,style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.otOnlyMinutes>0?"#d97706":"#94a3b8"}},mHHMM(r.otOnlyMinutes)),
+                e("td",{key:"n3",rowSpan:span,style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.lnOnlyMinutes>0?"#7c3aed":"#94a3b8"}},mHHMM(r.lnOnlyMinutes)),
+                e("td",{key:"n4",rowSpan:span,style:{...cellSt({nowrap:true}),padding:"6px 5px",color:r.lnOtMinutes>0?"#7c3aed":"#94a3b8"}},mHHMM(r.lnOtMinutes))
+              );
+              if(perRowStatus)cells.push(statusCell(row.status,row.approver,{key:"st"}));
+              else if(j===0)cells.push(statusCell(row.status,row.approver,{key:"st",rowSpan:span}));
+              return e("tr",{key:r.date+"_"+j,style:{background:rowBg}},...cells);
+            });
           })
         ),
         e("tfoot",null,
@@ -1253,6 +1420,11 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
     {k:"st",label:"状態",w:9.1,cls:"c-wrap"}
   ];
   const totalW=cols.reduce((s,c)=>s+c.w,0);
+  // 2026年9月・追加修正⑲：その月の内訳行（同日の別店舗）の数。行数が増えて1ページに収まらなくなるのを防ぐため、
+  // 「日数＋内訳行」が PRINT_DENSE_ROWS を超えたら表の文字を少し小さくする（dense）
+  const extraRows=days.reduce((n,r)=>n+expandDayRows(r).rows.length-1,0);
+  const dense=lastDay+extraRows>PRINT_DENSE_ROWS;
+  const multi=lastDay+extraRows>PRINT_MULTI_ROWS;   // 1ページに収まらない月は表を途中で区切って2ページ目へ続ける
 
   return e("div",{className:"print-only",style:{display:"none",padding:0}},
     e("h2",{style:{fontSize:14,marginBottom:4}},"勤怠集計表"+(isAdmin?" （給与含む）":"")),
@@ -1265,39 +1437,48 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
     // 月給制の支給額の案内（管理者が月給制の人を印刷するときだけ）は残す
     isMonthly&&isAdmin&&e("p",{style:{fontSize:10,marginBottom:8,color:"#666"}},
       "月給制のため支給額は月額固定（当月支給額: ¥"+(totalPay||0).toLocaleString()+"）"),
-    e("table",{className:"print-table"},
+    // 2026年9月・追加修正⑲：内訳行が増えて行数が PRINT_DENSE_ROWS を超える月は、A4縦1ページに収まるよう文字と余白を少し詰める（dense）
+    e("table",{className:"print-table"+(dense?" dense":"")+(multi?" multi":"")},
       e("colgroup",null,...cols.map(c=>e("col",{key:c.k,style:{width:(c.w/totalW*100).toFixed(2)+"%"}}))),
       e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k},colHead(c.label))))),
-      e("tbody",null,...allDates.map((date,i)=>{
+      // 2026年9月・追加修正⑲⑳：同日に別店舗の出勤がある日は、店舗ごとに1行ずつ日付の下に並べる（画面の月次一覧と同じ見せ方・expandDayRows）。
+      // 日付と労働時間の5列（1日分）はその日の行数ぶん縦につなげる。状態は新方式なら行ごと、旧方式なら縦につなげる
+      e("tbody",null,...allDates.flatMap((date,i)=>{
         const r=recMap[date];
         const dayNum=i+1;
         const dowIdx=new Date(y,m-1,dayNum).getDay();
         const dateLabel=`${m}/${dayNum}(${DOW[dowIdx]})`;
-        const breakStr=r?rangeText(r.breaks,r.breakMinutes?r.breakMinutes+"分":"—"):"—";
-        const travelStr=r?rangeText(r.travelTimes):"—";
         const isWeekend=dowIdx===0||dowIdx===6;
-        return e("tr",{key:i,className:isWeekend?"row-weekend":""},
-          e("td",{className:"c-nowrap"},dateLabel),
-          e("td",{className:"c-wrap"},r?.store?(STORE_ABBR[r.store]||r.store):"—"),
-          e("td",{className:"c-nowrap"},r?.clockIn||"—"),
-          e("td",{className:"c-nowrap"},r?.clockOut||"—"),
-          e("td",{className:"c-wrap"},breakStr),
-          ...(showTravel?[e("td",{key:"tv",className:"c-wrap"},travelStr)]:[]),
-          e("td",{className:"c-wrap"},r?.note||"—"),
-          e("td",{className:"c-nowrap"},r?mHHMM(r.workMinutes):"—"),
-          e("td",{className:"c-nowrap"},r?mHHMM(r.normalMinutes):"—"),
-          e("td",{className:"c-nowrap"},r?mHHMM(r.otOnlyMinutes):"—"),
-          e("td",{className:"c-nowrap"},r?mHHMM(r.lnOnlyMinutes):"—"),
-          e("td",{className:"c-nowrap"},r?mHHMM(r.lnOtMinutes):"—"),
+        const rowCls=isWeekend?"row-weekend":"";
+        const {rows,perRowStatus}=r?expandDayRows(r):{rows:[{store:"",clockIn:"",clockOut:"",breaks:[],travelTimes:[],note:"",status:null,approver:null,isSub:false}],perRowStatus:false};
+        const span=rows.length;
+        const statusCell=(row,extra)=>e("td",{className:"c-wrap",...(extra||{})},
+          r?S_LABEL_S[row.status||"draft"]:"—",
+          row.approver?e("span",{style:{color:"#666",marginLeft:3}}," "+shortName(row.approver)):null);
+        return rows.map((row,j)=>{
+          const sub=row.isSub,sc=sub?" row-sub":"";
+          const cells=[];
+          if(j===0)cells.push(e("td",{key:"d",className:"c-nowrap",rowSpan:span},dateLabel));
+          cells.push(
+            e("td",{key:"s",className:"c-wrap"+sc},sub?subStoreLabel(row.store):(row.store?(STORE_ABBR[row.store]||row.store):"—")),
+            e("td",{key:"i",className:"c-nowrap"+sc},row.clockIn||"—"),
+            e("td",{key:"o",className:"c-nowrap"+sc},row.clockOut||"—"),
+            e("td",{key:"b",className:"c-wrap"+sc},(sub||!r)?"—":rangeText(row.breaks,row.breakMinutes?row.breakMinutes+"分":"—")),
+            ...(showTravel?[e("td",{key:"tv",className:"c-wrap"+sc},(sub||!r)?"—":rangeText(row.travelTimes))]:[]),
+            e("td",{key:"n",className:"c-wrap"+sc},row.note||"—")
+          );
+          if(j===0)cells.push(
+            e("td",{key:"w",className:"c-nowrap",rowSpan:span},r?mHHMM(r.workMinutes):"—"),
+            e("td",{key:"n1",className:"c-nowrap",rowSpan:span},r?mHHMM(r.normalMinutes):"—"),
+            e("td",{key:"n2",className:"c-nowrap",rowSpan:span},r?mHHMM(r.otOnlyMinutes):"—"),
+            e("td",{key:"n3",className:"c-nowrap",rowSpan:span},r?mHHMM(r.lnOnlyMinutes):"—"),
+            e("td",{key:"n4",className:"c-nowrap",rowSpan:span},r?mHHMM(r.lnOtMinutes):"—")
+          );
           // 状態のあとに、承認した人／差し戻した人を小さく並べる
-          e("td",{className:"c-wrap"},
-            r?S_LABEL_S[r.status||"draft"]:"—",
-            r&&(r.status==="approved"?r.approvedBy:r.status==="rejected"?r.rejectBy:null)
-              ?e("span",{style:{color:"#666",marginLeft:3}},
-                  " "+shortName(r.status==="approved"?r.approvedBy:r.rejectBy))
-              :null
-          )
-        );
+          if(perRowStatus)cells.push(statusCell(row,{key:"st"}));
+          else if(j===0)cells.push(statusCell(row,{key:"st",rowSpan:span}));
+          return e("tr",{key:i+"_"+j,className:rowCls},...cells);
+        });
       })),
       e("tfoot",null,
         e("tr",{style:{fontWeight:"bold",background:"#e8e8e8"}},
@@ -1350,9 +1531,30 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     if(emp.role==="superadmin")return currentUser.role==="superadmin";
     return managedStores.includes(emp.store);
   });
+  const isOwner=currentUser.role==="superadmin";
+  // ===== 同日に複数店舗で働いた日の、店舗ごとの承認（2026年9月・追加修正⑳） =====
+  // 内訳（店舗ごとの行）は「その行の店舗の担当管理者」だけが承認・差戻しできる（オーナーは全部）。
+  // 例）JP所属の人のGOLFの行は、GOLFの店長が承認する（JPの店長は承認できない）。
+  // 旧方式（内訳なし）の記録は今までどおり「本人の所属店舗の担当管理者」が承認する
+  const canApproveSeg=(emp,rec,seg)=>{
+    if(!emp)return false;
+    if(emp.id===currentUser.id)return isOwner;
+    if(emp.role==="superadmin")return isOwner;
+    if(isOwner)return true;
+    if(rec&&isMultiSeg(rec))return managedStores.includes(seg?seg.store:"");
+    return managedStores.includes(emp.store);
+  };
+  const monthRecsOf=emp=>Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth));
+  // その月に、担当店舗で働いた「他店舗所属」の従業員（応援）。担当店舗の行だけ承認できる
+  const helperStaff=[...allStaffMap.values()].filter(emp=>
+    !targetStaff.some(x=>x.id===emp.id)&&emp.id!==currentUser.id&&emp.role!=="superadmin"&&
+    monthRecsOf(emp).some(r=>isMultiSeg(r)&&r.segs.some(sg=>managedStores.includes(sg.store))));
+  const helperGroups=managedStores.map(store=>[store,helperStaff.filter(emp=>monthRecsOf(emp).some(r=>isMultiSeg(r)&&r.segs.some(sg=>sg.store===store)))]).filter(g=>g[1].length>0);
+  // 自分が承認できる承認待ちの行数／差戻し中の行数（内訳1行＝1件。旧方式は1日＝1件）
+  const countSegs=(emp,st,onlyMine)=>monthRecsOf(emp).reduce((n,r)=>n+recSegs(r).filter(sg=>sg.status===st&&(!onlyMine||canApproveSeg(emp,r,sg))).length,0);
 
   // 選択中スタッフのその月の全日付レコード
-  const selEmp=targetStaff.find(x=>x.id===selEmpId);
+  const selEmp=[...targetStaff,...helperStaff].find(x=>x.id===selEmpId);
   const getDaysInMonth=month=>{
     const [y,m]=month.split("-").map(Number);
     const days=[];
@@ -1368,11 +1570,11 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   // 移動列：モノレール所属スタッフ、またはその月に移動時間の記録があれば表示
   const showTravel=needTravelCol(selEmp,selRecs);
 
-  // 全スタッフの承認待ち件数
+  // 全スタッフの承認待ち件数（自分が承認できる行の数。応援の人の担当店舗の行も含む）
   const allPending=[];
-  targetStaff.forEach(emp=>{
-    Object.values(records[emp.id]||{}).forEach(r=>{
-      if(r.date?.startsWith(approvalMonth)&&r.status==="submitted")allPending.push({...r,empName:emp.name});
+  [...targetStaff,...helperStaff].forEach(emp=>{
+    monthRecsOf(emp).forEach(r=>{
+      recSegs(r).forEach(sg=>{ if(sg.status==="submitted"&&canApproveSeg(emp,r,sg))allPending.push({...r,empName:emp.name}); });
     });
   });
 
@@ -1388,39 +1590,66 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   // 2026年9月（追加修正⑩）：店舗ごとに締められるようになったため、「全員が締まっているか」ではなく
   // 「そのスタッフの月が締まっているか」で操作の可否を判定する
   const empClosed=empId=>isAdminClosed(empId,approvalMonth);
-  const approve=async(empId,date)=>{
+  // 承認・差戻しは「内訳の行」単位（idx＝何店舗目か。旧方式は0）。patchSeg が日の項目もそろえる（追加修正⑳）
+  const segLabel=(rec,idx)=>isMultiSeg(rec)&&rec.segs.length>1?"（"+(STORE_ABBR[rec.segs[idx].store]||rec.segs[idx].store)+"）":"";
+  const approve=async(empId,date,idx)=>{
     if(empClosed(empId)){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
     const rec=records[empId]?.[date];if(!rec)return;
     // 承認者と承認日時を残す。届いたことを確認してから知らせる
-    const ok=await saveRecord({...rec,status:"approved",approvedBy:me,approvedAt:new Date().toISOString()},makeLog(me,"承認",nameOfStaff(empId),date,""));
+    const ok=await saveRecord(patchSeg(rec,idx||0,{status:"approved",approvedBy:me,approvedAt:new Date().toISOString()}),makeLog(me,"承認",nameOfStaff(empId),date+segLabel(rec,idx||0),""));
     if(!ok){showToast(failMsg("承認できませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
     showToast("承認しました ✓");
   };
   // 差戻しは理由の入力が必須。まず理由を聞いてから実行する
   const [rejectTarget,setRejectTarget]=useState(null);
-  const askReject=(empId,date)=>{
+  const askReject=(empId,date,idx)=>{
     if(empClosed(empId)){showToast("月締め済みです。月締めを解除してから差戻ししてください。","warning");return;}
-    setRejectTarget({empId,date});
+    setRejectTarget({empId,date,idx:idx||0});
   };
   const doReject=async(reason)=>{
-    const {empId,date}=rejectTarget;
+    const {empId,date,idx}=rejectTarget;
     const existing=records[empId]?.[date];
     const emp=[...employees,...(admins||[])].find(x=>x.id===empId);
     const rec=existing||{empId,date,clockIn:"",clockOut:"",breaks:[],note:"",status:"draft",hourlyWage:emp?.hourlyWage??1000,store:emp?.store||""};
-    const ok=await saveRecord({...rec,status:"rejected",
-      rejectReason:reason, rejectBy:me, rejectAt:new Date().toISOString()},makeLog(me,"差戻し",nameOfStaff(empId),date,reason));
+    const ok=await saveRecord(patchSeg(rec,idx,{status:"rejected",
+      rejectReason:reason, rejectBy:me, rejectAt:new Date().toISOString()}),makeLog(me,"差戻し",nameOfStaff(empId),date+segLabel(rec,idx),reason));
     setRejectTarget(null);
     if(!ok){showToast(failMsg("差し戻せませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
     showToast("差し戻しました","warning");
   };
+  // 差戻し取消（承認待ちに戻す）。データなしの日を差し戻していた場合は記録ごと消す
+  const undoReject=async(r,idx)=>{
+    const rec=records[r.empId]?.[r.date];
+    let ok;
+    if(!rec||(!rec.clockIn&&!rec.clockOut)){
+      ok=await gasDeleteRecord(r.empId,r.date,makeLog(me,"差戻し取消",nameOfStaff(r.empId),r.date,""));
+      if(ok)markLocalRecWrite(r.empId,r.date);
+      if(ok)setRecords(prev=>{
+        const empRecs={...(prev[r.empId]||{})};
+        delete empRecs[r.date];
+        return {...prev,[r.empId]:empRecs};
+      });
+    } else {
+      ok=await saveRecord(patchSeg(rec,idx||0,{status:"submitted",rejectReason:undefined,rejectBy:undefined,rejectAt:undefined}),makeLog(me,"差戻し取消",nameOfStaff(r.empId),r.date+segLabel(rec,idx||0),""));
+    }
+    if(!ok){showToast(failMsg("取り消せませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
+    showToast("差戻しを取り消しました");
+  };
+  // 自分が承認できる承認待ちの行を、1日ずつまとめた記録にして返す（一括承認用）
+  const approvableDays=()=>selRecs.filter(r=>r.status!==null).map(r=>{
+    const segs=recSegs(r);
+    const idxs=segs.map((sg,i)=>sg.status==="submitted"&&canApproveSeg(selEmp,r,sg)?i:-1).filter(i=>i>=0);
+    return {r,idxs};
+  }).filter(x=>x.idxs.length>0);
   const approveAll=async()=>{
     if(!selEmp){showToast("従業員を選択してください","warning");return;}
     if(empClosed(selEmp.id)){showToast("月締め済みです。月締めを解除してから操作してください。","warning");return;}
-    const targets=selRecs.filter(r=>r.status==="submitted");
-    if(targets.length===0){showToast("承認待ちのデータがありません","warning");return;}
+    const days=approvableDays();
+    if(days.length===0){showToast("承認待ちのデータがありません","warning");return;}
     const at=new Date().toISOString();
+    const targets=days.map(({r,idxs})=>idxs.reduce((acc,i)=>patchSeg(acc,i,{status:"approved",approvedBy:me,approvedAt:at}),records[selEmp.id][r.date]));
     // 全件が届いたことを確認してから知らせる（1回の通信でまとめて送る。履歴も同じ通信で書く）
-    const res=await saveRecords(targets.map(r=>({...r,status:"approved",approvedBy:me,approvedAt:at})),
+    const res=await saveRecords(targets,
       targets.map(r=>makeLog(me,"承認",selEmp.name,r.date,"一括承認")));
     if(!res.allOk){
       const reason=lastRefusal;lastRefusal=null;
@@ -1432,7 +1661,6 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     showToast(`${selEmp.name}の${targets.length}件を承認しました`);
   };
   // 月締め・解除はオーナー限定（画面側の表示制御。GAS側でも役割・パスワードを照合する）
-  const isOwner=currentUser.role==="superadmin";
   const [showOwnerPwModal,setShowOwnerPwModal]=useState(null); // "close" | "unclose" | null
   const [showCloseConfirm,setShowCloseConfirm]=useState(false);
   const [closing,setClosing]=useState(false);
@@ -1443,7 +1671,7 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
       return;
     }
     // 差戻し中があれば締め不可
-    const rejectedCount=targetStaff.reduce((n,emp)=>n+Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth)&&r.status==="rejected").length,0);
+    const rejectedCount=targetStaff.reduce((n,emp)=>n+countSegs(emp,"rejected",false),0);
     if(rejectedCount>0){
       showToast(`差戻し中が${rejectedCount}件あります。修正・承認後に月締めしてください。`,"warning");
       setShowCloseConfirm(false);
@@ -1476,16 +1704,18 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   const storeState=store=>{
     const members=storeMembers(store);
     const closedN=members.filter(emp=>isAdminClosed(emp.id,approvalMonth)).length;
-    const recsOf=emp=>Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth));
-    const pending=members.reduce((n,emp)=>n+recsOf(emp).filter(r=>r.status==="submitted").length,0);
-    const rejected=members.reduce((n,emp)=>n+recsOf(emp).filter(r=>r.status==="rejected").length,0);
-    return {members,closedN,allClosed:members.length>0&&closedN===members.length,pending,rejected};
+    // 月締めは人単位：その人の全部の行（他店舗で働いた行も含む）が承認済みでないと締められない（追加修正⑳）。
+    // 他店舗の行はその店舗の店長しか承認できないので、その分は「他店舗の分」として件数を分けて知らせる
+    const pending=members.reduce((n,emp)=>n+countSegs(emp,"submitted",false),0);
+    const pendingOther=members.reduce((n,emp)=>n+countSegs(emp,"submitted",false)-countSegs(emp,"submitted",true),0);
+    const rejected=members.reduce((n,emp)=>n+countSegs(emp,"rejected",false),0);
+    return {members,closedN,allClosed:members.length>0&&closedN===members.length,pending,pendingOther,rejected};
   };
   const [storeConfirm,setStoreConfirm]=useState(null);   // 確認中の店舗名
   const [storeBusy,setStoreBusy]=useState(null);         // 送信中の店舗名
   const doStoreClose=async(store,passHash)=>{
     const st=storeState(store);
-    if(st.pending>0){showToast(`${store}に承認待ちが${st.pending}件あります。すべて承認または差戻ししてから月締めしてください。`,"warning");setStoreConfirm(null);return;}
+    if(st.pending>0){showToast(`${store}に承認待ちが${st.pending}件あります。すべて承認または差戻ししてから月締めしてください。`+(st.pendingOther>0?`（うち${st.pendingOther}件は他店舗で働いた分で、その店舗の店長の承認が必要です）`:""),"warning");setStoreConfirm(null);return;}
     if(st.rejected>0){showToast(`${store}に差戻し中が${st.rejected}件あります。修正・承認後に月締めしてください。`,"warning");setStoreConfirm(null);return;}
     setStoreBusy(store);
     const ok=await setAdminClosedMany(st.members.map(emp=>emp.id),approvalMonth,me,currentUser.id,passHash,
@@ -1611,11 +1841,10 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
         ),
         e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
       list.map(emp=>{
-        const empMonthRecs=Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth));
-        const pendingCount=empMonthRecs.filter(r=>r.status==="submitted").length;
-        const rejectedCount=empMonthRecs.filter(r=>r.status==="rejected").length;
+        // 件数は「自分が承認できる行」だけ数える（他店舗の行はその店舗の店長の担当。追加修正⑳）
+        const pendingCount=countSegs(emp,"submitted",true);
+        const rejectedCount=countSegs(emp,"rejected",true);
         const isEmpClosed=isAdminClosed(emp.id,approvalMonth);
-        const hasRejected=empMonthRecs.some(r=>r.status==="rejected");
         return e("button",{key:emp.id,
           onClick:()=>setSelEmpId(selEmpId===emp.id?null:emp.id),
           style:{padding:"8px 14px",borderRadius:10,border:`2px solid ${selEmpId===emp.id?"#1e3a5f":"#e2e8f0"}`,background:selEmpId===emp.id?"#1e3a5f":"white",color:selEmpId===emp.id?"white":"#1e3a5f",cursor:"pointer",fontFamily:"inherit",fontWeight:600,fontSize:13,display:"flex",alignItems:"center",gap:6}},
@@ -1627,76 +1856,143 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
         );
       })
         )
+      )),
+      // 他店舗所属の従業員が担当店舗で働いた日（応援）。担当店舗の行だけ承認できる（追加修正⑳）
+      ...helperGroups.map(([store,list])=>e("div",{key:"h_"+store,style:{marginBottom:12}},
+        e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}},
+          e("div",{style:{fontSize:11.5,fontWeight:700,color:"#7c3aed",background:"#f5f3ff",borderRadius:6,padding:"4px 10px",display:"inline-block"}},
+            store+"で働いた他店舗の従業員（"+list.length+"名）"),
+          e("span",{style:{fontSize:11,color:"#94a3b8"}},"この店舗の行だけ承認できます。月締めは所属店舗で行います")
+        ),
+        e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+          list.map(emp=>{
+            const pendingCount=countSegs(emp,"submitted",true);
+            const rejectedCount=countSegs(emp,"rejected",true);
+            return e("button",{key:emp.id,
+              onClick:()=>setSelEmpId(selEmpId===emp.id?null:emp.id),
+              style:{padding:"8px 14px",borderRadius:10,border:`2px solid ${selEmpId===emp.id?"#1e3a5f":"#e2e8f0"}`,background:selEmpId===emp.id?"#1e3a5f":"white",color:selEmpId===emp.id?"white":"#1e3a5f",cursor:"pointer",fontFamily:"inherit",fontWeight:600,fontSize:13,display:"flex",alignItems:"center",gap:6}},
+              emp.name,
+              e("span",{style:{fontSize:10,color:selEmpId===emp.id?"rgba(255,255,255,.7)":"#94a3b8"}},emp.store),
+              pendingCount>0&&e("span",{style:{fontSize:10,background:"#fff3cd",color:"#856404",padding:"1px 5px",borderRadius:8}},pendingCount+"件"),
+              rejectedCount>0&&e("span",{style:{fontSize:10,background:"#fee2e2",color:"#991b1b",padding:"1px 5px",borderRadius:8}},"差戻し"+rejectedCount)
+            );
+          })
+        )
       ))
     ),
     // 選択スタッフの日別一覧
     selEmp&&e("div",null,
       e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,gap:8,flexWrap:"wrap"}},
         e("div",{style:{fontWeight:700,fontSize:14,color:"#1e3a5f"}},selEmp.name+" の"+approvalMonth+"の勤怠"),
-        selRecs.filter(r=>r.status==="submitted").length>0&&!empClosed(selEmp.id)&&e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},onClick:approveAll},"✓ 承認待ちを一括承認")
+        approvableDays().length>0&&!empClosed(selEmp.id)&&e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 16px"},onClick:approveAll},"✓ 承認待ちを一括承認"),
+        !targetStaff.some(x=>x.id===selEmp.id)&&e("span",{style:{fontSize:11,color:"#7c3aed",fontWeight:600}},"所属："+selEmp.store+"。担当店舗の行だけ承認できます")
       ),
       e("div",{style:{overflowX:"auto"}},
       e("table",{className:"table",style:{fontSize:13}},
         // 2026年9月・追加修正⑯：「労働時間」→「実労働時間」（T_LABEL.work。月次一覧・帳票・カードと同じ名称にそろえた。内容は変更なし）
-        e("thead",null,e("tr",null,["日付","店舗","出勤","退勤","休憩",...(showTravel?["移動"]:[]),"備考",T_LABEL.work,"状態","操作"].map(h=>e("th",{key:h},h)))),
-        e("tbody",null,...selRecs.map((r,i)=>{
+        // 2026年9月・追加修正⑳：同日に複数店舗で働いた日は店舗ごとに1行。状態・操作は行ごと、日付・実労働時間（1日分）は縦につなげる
+        // 2026年9月：「操作」（承認・差戻しボタン）は日付のすぐ右に置く（豊様のご指示。表が横に長くても右端までスクロールせずに押せる）
+        e("thead",null,e("tr",null,["日付","操作","店舗","出勤","退勤","休憩",...(showTravel?["移動"]:[]),"備考",T_LABEL.work,"状態"].map(h=>e("th",{key:h},h)))),
+        e("tbody",null,...selRecs.flatMap((r,i)=>{
           const calc=calcRecord({...r,hourlyWage:r.hourlyWage!=null?r.hourlyWage:(selEmp.hourlyWage??1000)});
+          const dayStatus=effStatus(r);
           const hasData=r.clockIn||r.clockOut;
-          const breakStr=rangeText(r.breaks);
-          const travelStr=rangeText(r.travelTimes);
-          return e("tr",{key:i,style:{background:r.status==="rejected"?"#fff1f2":!hasData&&r.status!=="rejected"?"#fafafa":undefined}},
-            e("td",{style:{fontWeight:600}},r.date),
-            e("td",{style:{fontSize:11,color:"#475569"}},hasData?(r.store||"—"):"—"),
-            e("td",null,r.clockIn||"—"),
-            e("td",null,r.clockOut||"—"),
-            e("td",{style:{fontSize:11,color:"#64748b"}},breakStr),
-            showTravel&&e("td",{style:{fontSize:11,color:"#0369a1"}},travelStr),
-            e("td",{style:{fontSize:11,color:"#64748b",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.note||"—"),
-            e("td",null,hasData?mHHMM(calc.workMinutes):"—"),
-            e("td",null,r.status
-              ?e("span",{className:`status-badge ${S_CLASS[r.status]}`},S_LABEL[r.status])
-              :e("span",{style:{fontSize:11,color:"#94a3b8"}},"データなし")
-            ),
-            e("td",null,
-              r.status==="approved"
+          const segs=r.status===null?[{store:"",clockIn:"",clockOut:"",breaks:[],travelTimes:[],note:"",status:null}]:recSegs(r);
+          const span=segs.length;
+          const rowBg=dayStatus==="rejected"?"#fff1f2":!hasData&&dayStatus!=="rejected"?"#fafafa":undefined;
+          const closed=empClosed(r.empId);
+          return segs.map((sg,idx)=>{
+            const can=canApproveSeg(selEmp,r,sg);
+            const segHasData=!!(sg.clockIn||sg.clockOut);
+            const ops=sg.status==="approved"
+              ?e("div",{style:{display:"flex",gap:6}},
+                e("span",{style:{color:"#059669",fontSize:12}},"✓ 承認済"),
+                can&&!closed&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date,idx)},"差戻し"))
+              :sg.status==="rejected"
                 ?e("div",{style:{display:"flex",gap:6}},
-                  e("span",{style:{color:"#059669",fontSize:12}},"✓ 承認済"),
-                  !empClosed(r.empId)&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date)},"差戻し")
-                )
-                :r.status==="rejected"
-                  ?e("div",{style:{display:"flex",gap:6}},
-                    e("button",{className:"btn btn-warning",style:{fontSize:11,padding:"4px 10px"},onClick:async()=>{
-                      const rec=records[r.empId]?.[r.date];
-                      let ok;
-                      if(!rec||(!rec.clockIn&&!rec.clockOut)){
-                        // データなしで差戻したケース→レコードを削除してデータなしに戻す（GAS側も削除）
-                        ok=await gasDeleteRecord(r.empId,r.date,makeLog(me,"差戻し取消",nameOfStaff(r.empId),r.date,""));
-                        if(ok)markLocalRecWrite(r.empId,r.date);
-                        if(ok)setRecords(prev=>{
-                          const empRecs={...(prev[r.empId]||{})};
-                          delete empRecs[r.date];
-                          return {...prev,[r.empId]:empRecs};
-                        });
-                      } else {
-                        // データありで差戻したケース→承認待ちに戻す（差戻し理由も消す）
-                        ok=await saveRecord({...rec,status:"submitted",
-                          rejectReason:undefined,rejectBy:undefined,rejectAt:undefined},makeLog(me,"差戻し取消",nameOfStaff(r.empId),r.date,""));
-                      }
-                      if(!ok){showToast(failMsg("取り消せませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
-                      showToast("差戻しを取り消しました");
-                    }},"差戻し取消")
-                  )
-                  :e("div",{style:{display:"flex",gap:6}},
-                    hasData&&!empClosed(r.empId)&&e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>approve(r.empId,r.date)},"承認"),
-                    !empClosed(r.empId)&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date)},"差戻し")
-                  )
-            )
-          );
+                  can&&!closed&&e("button",{className:"btn btn-warning",style:{fontSize:11,padding:"4px 10px"},onClick:()=>undoReject(r,idx)},"差戻し取消"))
+                :e("div",{style:{display:"flex",gap:6}},
+                  segHasData&&can&&!closed&&e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>approve(r.empId,r.date,idx)},"承認"),
+                  can&&!closed&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date,idx)},"差戻し"),
+                  !can&&sg.status&&e("span",{style:{fontSize:11,color:"#94a3b8"}},(STORE_ABBR[sg.store]||sg.store)+"の店長が承認"));
+            const cells=[];
+            if(idx===0)cells.push(e("td",{key:"d",rowSpan:span,style:{fontWeight:600}},r.date));
+            cells.push(
+              e("td",{key:"op",style:{whiteSpace:"nowrap"}},ops),
+              e("td",{key:"s",style:{fontSize:11,color:"#475569"}},segHasData?(sg.store||"—"):"—"),
+              e("td",{key:"i"},sg.clockIn||"—"),
+              e("td",{key:"o"},sg.clockOut||"—"),
+              e("td",{key:"b",style:{fontSize:11,color:"#64748b"}},rangeText(sg.breaks)),
+              showTravel&&e("td",{key:"t",style:{fontSize:11,color:"#0369a1"}},rangeText(sg.travelTimes)),
+              e("td",{key:"n",style:{fontSize:11,color:"#64748b",maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},sg.note||"—")
+            );
+            if(idx===0)cells.push(e("td",{key:"w",rowSpan:span},hasData?mHHMM(calc.workMinutes):"—"));
+            cells.push(
+              e("td",{key:"st"},sg.status
+                ?e("span",{className:`status-badge ${S_CLASS[sg.status]}`},S_LABEL[sg.status])
+                :e("span",{style:{fontSize:11,color:"#94a3b8"}},"データなし"))
+            );
+            return e("tr",{key:i+"_"+idx,style:{background:rowBg}},...cells);
+          });
         }))
       )
       )
     ),
     !selEmp&&e("p",{style:{textAlign:"center",color:"#94a3b8",padding:"32px"}},"上の従業員名を選択すると、その月の勤怠が表示されます")
+  );
+}
+
+// 店舗②③の入力欄用：保存済みの内訳を入力欄の形（休憩・移動は最低1行）にする／比較用（追加修正⑳）
+function toFormSeg(sg){
+  return {store:sg.store||"",clockIn:sg.clockIn||"",clockOut:sg.clockOut||"",
+    breaks:(sg.breaks&&sg.breaks.length)?sg.breaks.map(x=>({start:x.start,end:x.end})):[{start:"",end:""}],
+    travelTimes:(sg.travelTimes&&sg.travelTimes.length)?sg.travelTimes.map(x=>({start:x.start,end:x.end})):[{start:"",end:""}],note:sg.note||""};
+}
+function segsKey(list){return (list||[]).map(sg=>[sg.store||"",sg.clockIn||"",sg.clockOut||"",sg.note||"",validRanges(sg.breaks),validRanges(sg.travelTimes)]);}
+// 店舗②③の入力欄（1店舗分）。店舗・出勤・退勤・休憩・移動（モノレールのみ）・備考。
+// 承認済みの分は disabled で固定。差戻し中の分は理由を表示する
+function SubStoreEditor({idx,seg,status,rejectReason,disabled,canRemove,isBi,allStores,prevSeg,onChange,onRemove,showToast}){
+  const num="①②③"[idx]||String(idx+1);
+  const isMono=seg.store==="モノレール";
+  const upd=patch=>onChange({...seg,...patch});
+  const inRange=(t)=>{ if(!seg.clockIn||!seg.clockOut||!t)return true;
+    const inMin=toMin(seg.clockIn);let outMin=toMin(seg.clockOut),tm=toMin(t);if(outMin<=inMin)outMin+=1440;if(tm<inMin)tm+=1440;return tm>=inMin&&tm<=outMin; };
+  const setRange=(key,i,field,v)=>{ if(v&&!inRange(v)){showToast(L("出勤〜退勤の範囲内で入力してください","Enter within clock in–out range",isBi),"warning");return;}
+    const arr=[...(seg[key]||[])];arr[i]={...arr[i],[field]:v};upd({[key]:arr}); };
+  const rangeRows=(key,label)=>e("div",{style:{marginBottom:10}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
+      e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700}},label),
+      !disabled&&e("button",{type:"button",onClick:()=>upd({[key]:[...(seg[key]||[]),{start:"",end:""}]}),style:{fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #1e3a5f",background:"white",color:"#1e3a5f",cursor:"pointer",fontWeight:700}},L("＋ 追加","＋ Add",isBi))),
+    ...(seg[key]&&seg[key].length?seg[key]:[{start:"",end:""}]).map((b,i)=>e("div",{key:i,style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
+      e("span",{style:{fontSize:11,color:"#94a3b8",width:16,textAlign:"right",flexShrink:0}},i+1),
+      e("input",{type:"time",value:b.start||"",onChange:ev=>setRange(key,i,"start",ev.target.value),className:"input-field",disabled,style:{flex:1}}),
+      e("span",{style:{color:"#94a3b8",fontSize:12}},"〜"),
+      e("input",{type:"time",value:b.end||"",onChange:ev=>setRange(key,i,"end",ev.target.value),className:"input-field",disabled,style:{flex:1}}),
+      !disabled&&(seg[key]||[]).length>1&&e("button",{type:"button",onClick:()=>upd({[key]:seg[key].filter((_,j)=>j!==i)}),style:{fontSize:12,width:24,height:24,borderRadius:"50%",border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:700}},"×")
+    )));
+  const overlap=prevSeg&&prevSeg.clockIn&&prevSeg.clockOut&&seg.clockIn&&prevSeg.clockOut!==seg.clockIn&&(()=>{
+    const inMin=toMin(prevSeg.clockIn);let outMin=toMin(prevSeg.clockOut),tm=toMin(seg.clockIn);if(outMin<=inMin)outMin+=1440;if(tm<inMin)tm+=1440;return tm>=inMin&&tm<=outMin;})();
+  return e("div",{style:{marginBottom:14,padding:"12px 14px",background:disabled?"#f8fafc":"#f8faff",border:"1.5px solid "+(status==="rejected"?"#fca5a5":"#dbeafe"),borderRadius:10}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}},
+      e("span",{style:{fontSize:13,fontWeight:700,color:"#1e3a5f"}},L("店舗"+num,"Store "+(idx+1),isBi)),
+      status&&e("span",{className:`status-badge ${S_CLASS[status]}`},S_LABEL[status]),
+      status==="approved"&&e("span",{style:{fontSize:11,color:"#94a3b8",fontWeight:600}},L("🔒 承認済みのため変更できません","🔒 Locked (approved)",isBi)),
+      canRemove&&e("button",{type:"button",onClick:onRemove,style:{marginLeft:"auto",fontSize:11,padding:"3px 10px",borderRadius:20,border:"1.5px solid #dc2626",background:"white",color:"#dc2626",cursor:"pointer",fontWeight:700}},L("この店舗を削除","Remove",isBi))
+    ),
+    status==="rejected"&&rejectReason&&e("div",{style:{fontSize:12,color:"#991b1b",fontWeight:600,marginBottom:8}},L("差戻し理由：","Reason: ",isBi)+rejectReason),
+    e("div",{style:{marginBottom:10}},
+      e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("店舗","Store",isBi)),
+      e("select",{value:seg.store,onChange:ev=>upd({store:ev.target.value}),className:"input-field",style:{width:200,maxWidth:"100%"},disabled},
+        allStores.map(x=>e("option",{key:x,value:x},x)))),
+    e("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:10}},
+      e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("出勤時刻","Clock In",isBi)),e("input",{type:"time",value:seg.clockIn,onChange:ev=>upd({clockIn:ev.target.value}),className:"input-field",disabled})),
+      e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("退勤時刻","Clock Out",isBi)),e("input",{type:"time",value:seg.clockOut,onChange:ev=>upd({clockOut:ev.target.value}),className:"input-field",disabled}))
+    ),
+    overlap&&e("div",{style:{background:"#fee2e2",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#991b1b",fontWeight:600}},
+      "⚠ "+L("出勤が前の店舗の勤務時間と重なっています","Clock-in overlaps the previous store",isBi)+"（"+prevSeg.clockIn+"〜"+prevSeg.clockOut+"）"),
+    rangeRows("breaks",L("休憩時間","Break",isBi)),
+    isMono&&rangeRows("travelTimes",L("移動時間","Travel Time",isBi)),
+    e("input",{type:"text",value:seg.note,onChange:ev=>upd({note:ev.target.value}),className:"input-field",placeholder:L("店舗"+num+"の備考（任意）","Note for store "+(idx+1)+" (optional)",isBi),disabled})
   );
 }
 
@@ -1733,13 +2029,15 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   const allStores=ALL_STORES; // 部署に関係なく全店舗から選択可能（他店舗ヘルプ勤務に対応）
   // その日の対象店舗がモノレールのときだけ移動時間を入力可能（2026年9月・追加修正⑫：所属による判定を廃止）
   const isConstruction=isMonorailWork(currentUser.id,selectedStore);
-  // 承認済みの日のみ対象店舗を変更不可（承認待ち・差戻し中は修正できる）
-  const storeLocked=(records[currentUser.id]?.[editDate]||{}).status==="approved";
-  // 同日に別店舗の出勤がある場合の入力欄
-  const [showSubStore,setShowSubStore]=useState(false);
-  const [subFrom,setSubFrom]=useState("");
-  const [subTo,setSubTo]=useState("");
-  const [subStore,setSubStore]=useState(currentUser.store||ALL_STORES[0]);
+  // ===== 同日に複数店舗で働いた日（2026年9月・追加修正⑳） =====
+  // 店舗①＝今までどおり form＋selectedStore。店舗②③＝extra（{store,clockIn,clockOut,breaks,travelTimes,note} の配列。最大 MAX_SEGS-1 件）。
+  // 提出時に [店舗①, ...店舗②③] を segs として1日の記録にまとめる（withDayFields）。店舗②③が無ければ今までどおりの1店舗の記録として保存する
+  const [extra,setExtra]=useState([]);
+  const savedSegs=(()=>{const r0=records[currentUser.id]?.[editDate];return r0&&isMultiSeg(r0)?r0.segs:null;})();
+  const segStatus=i=>savedSegs?(savedSegs[i]?savedSegs[i].status:null):(i===0?((records[currentUser.id]?.[editDate]||{}).status||null):null);
+  const anySegApproved=!!savedSegs&&savedSegs.some(x=>x.status==="approved");
+  // 承認済みの店舗の分は変更不可（日全体が承認済みのときは全部。店舗ごとに承認される日は、その店舗の分だけ）
+  const storeLocked=(records[currentUser.id]?.[editDate]||{}).status==="approved"||segStatus(0)==="approved";
 
   const savePassToList=(hash)=>{
     const upd={...currentUser,passHash:hash};
@@ -1757,16 +2055,20 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   // （Q1対策：管理者が確認中の内容が、本人の操作で書き換わらないようにする。
   //   まだスプレッドシートに届いていない＝synced:falseのときは、再送信のため引き続き編集可）
   const canEdit=rec.status!=="approved"&&!monthClosed&&(rec.status!=="submitted"||rec.synced===false);
+  const canEdit0=canEdit&&!storeLocked;   // 店舗①の入力欄（店舗ごとに承認される日で、店舗①だけ承認済みのときも固定）
   // 入力内容が保存済みの記録と異なるか（＝未保存の変更があるか）
   const hasUnsaved=(()=>{
     if(!canEdit)return false;
     const vb=a=>(a||[]).filter(x=>x.start&&x.end);
-    const same=(rec.clockIn||"")===(form.clockIn||"")&&
-      (rec.clockOut||"")===(form.clockOut||"")&&
-      (rec.note||"")===(form.note||"")&&
-      (rec.store||currentUser.store||"")===selectedStore&&
-      JSON.stringify(vb(rec.breaks))===JSON.stringify(vb(form.breaks))&&
-      JSON.stringify(vb(rec.travelTimes))===JSON.stringify(vb(form.travelTimes));
+    // 店舗①は保存済みの記録（複数店舗の日は1店舗目の内訳）と比べ、店舗②③は保存済みの内訳の2件目以降と比べる
+    const s0=isMultiSeg(rec)?rec.segs[0]:rec;
+    const same=(s0.clockIn||"")===(form.clockIn||"")&&
+      (s0.clockOut||"")===(form.clockOut||"")&&
+      (s0.note||"")===(form.note||"")&&
+      (s0.store||currentUser.store||"")===selectedStore&&
+      JSON.stringify(vb(s0.breaks))===JSON.stringify(vb(form.breaks))&&
+      JSON.stringify(vb(s0.travelTimes))===JSON.stringify(vb(form.travelTimes))&&
+      JSON.stringify(segsKey(isMultiSeg(rec)?rec.segs.slice(1):[]))===JSON.stringify(segsKey(extra));
     return !same;
   })();
   // ナビゲーションバーの「🔄 最新の状態に更新」ボタンから見えるように、未保存の入力があるかどうかを
@@ -1786,30 +2088,29 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   // 後者でも「入力中」と誤判定して、消えたはずの古い時刻が入力欄に残り続けていた。
   // そこで「入力欄に読み込んだ時点（＝本人がまだ手を加えていない状態）の内容」を覚えておき、
   // 本人が手を加えたときだけ、読み込み直しを止めるようにした。
-  const formSnap=(f,store)=>JSON.stringify([f.clockIn||"",f.clockOut||"",f.note||"",store||"",
-    (f.breaks||[]).filter(x=>x.start&&x.end),(f.travelTimes||[]).filter(x=>x.start&&x.end)]);
+  const formSnap=(f,store,ex)=>JSON.stringify([f.clockIn||"",f.clockOut||"",f.note||"",store||"",
+    (f.breaks||[]).filter(x=>x.start&&x.end),(f.travelTimes||[]).filter(x=>x.start&&x.end),segsKey(ex||extra)]);
   const formBaseRef=useRef(null);
   // 入力欄が保存済みの記録と一致している間は、その内容を「手を加えていない状態」として覚え直す
-  useEffect(()=>{ if(!hasUnsaved)formBaseRef.current=formSnap(form,selectedStore); });
+  useEffect(()=>{ if(!hasUnsaved)formBaseRef.current=formSnap(form,selectedStore,extra); });
   // 日付欄で古い月の日を選んだら、その月の勤怠を追加で読む
   useEffect(()=>{ if(ensureMonthLoaded)ensureMonthLoaded(String(editDate).substring(0,7)); },[editDate]);
   const prevEditDateRef=useRef(editDate);
   useEffect(()=>{
     const dateChanged=editDate!==prevEditDateRef.current;
     prevEditDateRef.current=editDate;
-    const userEdited=formBaseRef.current!=null&&formSnap(form,selectedStore)!==formBaseRef.current;
+    const userEdited=formBaseRef.current!=null&&formSnap(form,selectedStore,extra)!==formBaseRef.current;
     // 本人が入力中で、まだ提出できる状態なら、入力内容を優先して読み込み直さない
     if(!dateChanged&&userEdited&&canEdit)return;
     const r=getRecord(currentUser.id,editDate);
-    const eb=r.breaks&&r.breaks.length?r.breaks:[{start:"",end:""}];
-    const et=r.travelTimes&&r.travelTimes.length?r.travelTimes:[{start:"",end:""}];
-    setForm({clockIn:r.clockIn||"",clockOut:r.clockOut||"",breaks:eb,travelTimes:et,note:r.note||""});
+    // 複数店舗の日は1店舗目の内訳を店舗①の入力欄に、2件目以降を店舗②③に読み込む（追加修正⑳）
+    const s0=isMultiSeg(r)?r.segs[0]:r;
+    const eb=s0.breaks&&s0.breaks.length?s0.breaks:[{start:"",end:""}];
+    const et=s0.travelTimes&&s0.travelTimes.length?s0.travelTimes:[{start:"",end:""}];
+    setForm({clockIn:s0.clockIn||"",clockOut:s0.clockOut||"",breaks:eb,travelTimes:et,note:s0.note||""});
     // その日に記録された店舗を復元（未記録の日は自分の所属店舗）
-    setSelectedStore(r.store||currentUser.store||"");
-    // 別店舗入力欄は日付を変えたら閉じる
-    // 別店舗の記録が備考にある日は、チェックを入れた状態で開く
-    const hasSub=(r.note||"").split(" / ").some(s=>/^\d{1,2}:\d{2}-\d{1,2}:\d{2}\s+\S/.test(s.trim()));
-    setShowSubStore(hasSub);setSubFrom("");setSubTo("");
+    setSelectedStore(s0.store||currentUser.store||"");
+    setExtra(isMultiSeg(r)?r.segs.slice(1).map(toFormSeg):[]);
   },[editDate,records]);
   // 未保存の入力があるまま日付を移動しようとしたら確認する
   const changeDate=(next)=>{
@@ -1820,28 +2121,61 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   };
   const summary=getMonthlySummary(currentUser.id);
   // calcはeditDateと選択中店舗を使って安全に計算（モノレール選択時は移動控除もプレビューに反映）
-  const calc=editDate?calcRecord({...rec,...form,date:editDate,store:selectedStore,hourlyWage:currentUser.hourlyWage}):{workMinutes:0,overtimeMinutes:0,lateNightMinutes:0,pay:0};
+  // 店舗②③があるときは内訳（segs）から計算する（店舗の間の空き時間は自動で除かれる）
+  const formSegs=()=>[{store:selectedStore,clockIn:form.clockIn,clockOut:form.clockOut,breaks:form.breaks,travelTimes:form.travelTimes,note:form.note},...extra];
+  const calc=editDate?(extra.length?calcRecord({segs:formSegs(),hourlyWage:currentUser.hourlyWage})
+    :calcRecord({...rec,...form,segs:undefined,date:editDate,store:selectedStore,hourlyWage:currentUser.hourlyWage})):{workMinutes:0,overtimeMinutes:0,lateNightMinutes:0,pay:0};
 
+  // 1店舗分（店舗①または②③）の入力チェック。問題があればその文言を返す
+  const checkSeg=(sg,label)=>{
+    const pre=label?label+"：":"";
+    if(!sg.clockIn||!sg.clockOut)return pre+"出勤・退勤時刻を入力してください";
+    const isMono=sg.store==="モノレール";
+    const sameTime=arr=>(arr||[]).filter(b=>b.start&&b.end&&b.start===b.end);
+    if(sameTime(sg.breaks).length>0)return pre+"休憩の開始と終了が同じ時刻です。修正してください。";
+    if(isMono&&sameTime(sg.travelTimes).length>0)return pre+"移動時間の開始と終了が同じ時刻です。修正してください。";
+    const outOfRange=arr=>(arr||[]).filter(b=>b.start&&b.end&&!isRangeWithinShift(sg.clockIn,sg.clockOut,b.start,b.end));
+    if(outOfRange(sg.breaks).length>0)return pre+"勤務時間外の休憩があります。修正してください。";
+    if(isMono&&outOfRange(sg.travelTimes).length>0)return pre+"勤務時間外の移動時間があります。修正してください。";
+    return null;
+  };
   const doSave=(submit=true)=>{
     if(monthClosed){showToast("月締め済みのため入力できません","warning");return;}
-    if(!form.clockIn||!form.clockOut){showToast("出勤・退勤時刻を入力してください","warning");return;}
-    // 休憩・移動が勤務時間外チェック（日またぎ対応：isRangeWithinShiftで統一）
-    const sameTime=arr=>(arr||[]).filter(b=>b.start&&b.end&&b.start===b.end);
-    if(sameTime(form.breaks).length>0){showToast("休憩の開始と終了が同じ時刻です。修正してください。","warning");return;}
-    if(isConstruction&&sameTime(form.travelTimes).length>0){showToast("移動時間の開始と終了が同じ時刻です。修正してください。","warning");return;}
-    const outOfRange=arr=>(arr||[]).filter(b=>b.start&&b.end&&!isRangeWithinShift(form.clockIn,form.clockOut,b.start,b.end));
-    if(outOfRange(form.breaks).length>0){showToast("勤務時間外の休憩があります。修正してください。","warning");return;}
-    if(isConstruction&&outOfRange(form.travelTimes).length>0){showToast("勤務時間外の移動時間があります。修正してください。","warning");return;}
+    const segsIn=formSegs();
+    const multi=extra.length>0||isMultiSeg(rec);
+    for(let i=0;i<segsIn.length;i++){
+      const err=checkSeg(segsIn[i],multi?"店舗"+"①②③"[i]:"");
+      if(err){showToast(err,"warning");return;}
+    }
+    // 店舗②③は前の店舗の退勤より後に始まること（重なりは不可）
+    for(let i=1;i<segsIn.length;i++){
+      const prev=segsIn[i-1],cur=segsIn[i];
+      if(prev.clockOut!==cur.clockIn&&isWithinShiftFor(prev.clockIn,prev.clockOut,cur.clockIn)){
+        showToast("店舗"+"①②③"[i]+"の出勤が、店舗"+"①②③"[i-1]+"の勤務時間（"+prev.clockIn+"〜"+prev.clockOut+"）と重なっています。修正してください。","warning");return;
+      }
+    }
     if(rec.status==="approved"){showToast("承認済みのため修正できません","warning");return;}
     // 提出済み・到達済み（管理者の確認待ち）は、差戻しを経ないと直せない
     // （Q1対策。ボタン自体も非表示にしているが、ここでも二重に防いでおく）
     if(rec.status==="submitted"&&rec.synced!==false){showToast("管理者の確認待ちです。内容を直したい場合は管理者に差戻しを依頼してください","warning");return;}
-    const r={...rec,...form,empId:currentUser.id,date:editDate,hourlyWage:currentUser.hourlyWage,
-      // 承認済みの日は保存時も元の店舗を維持する
-      store:storeLocked?(rec.store||selectedStore):selectedStore,status:"submitted",
-      // 再提出したら、前の差戻し理由と承認者は消す
-      rejectReason:undefined, rejectBy:undefined, rejectAt:undefined,
-      approvedBy:undefined, approvedAt:undefined};
+    if(!multi){
+      // 1店舗の日は今までどおりの形（内訳なし）で保存する
+      const r={...rec,...form,empId:currentUser.id,date:editDate,hourlyWage:currentUser.hourlyWage,
+        // 承認済みの日は保存時も元の店舗を維持する
+        store:storeLocked?(rec.store||selectedStore):selectedStore,status:"submitted",
+        // 再提出したら、前の差戻し理由と承認者は消す
+        rejectReason:undefined, rejectBy:undefined, rejectAt:undefined,
+        approvedBy:undefined, approvedAt:undefined};
+      submitRecord(r);
+      return;
+    }
+    // 複数店舗の日：承認済みの店舗の分は保存済みの内容のまま（入力欄も固定している）、それ以外は承認待ちにして差戻し・承認の情報を消す
+    const segs=segsIn.map((sg,i)=>{
+      const saved=savedSegs&&savedSegs[i];
+      if(saved&&saved.status==="approved")return saved;
+      return {store:sg.store,clockIn:sg.clockIn,clockOut:sg.clockOut,breaks:sg.breaks,travelTimes:sg.store==="モノレール"?sg.travelTimes:[],note:sg.note,status:"submitted"};
+    });
+    const r=withDayFields({...rec,empId:currentUser.id,date:editDate,hourlyWage:currentUser.hourlyWage,breakMinutes:undefined},segs);
     submitRecord(r);
   };
 
@@ -1891,6 +2225,8 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     // 提出済み・到達済み（管理者の確認待ち）は、リセットも差戻しを経ないとできない
     // （Q1対策：再提出と同じ理由。ボタン自体も非表示にしているが、ここでも二重に防いでおく）
     if(rec.status==="submitted"&&rec.synced!==false){showToast("管理者の確認待ちです。内容を直したい場合は管理者に差戻しを依頼してください","warning");return;}
+    // 店舗ごとに承認される日で、承認済みの店舗の分があるときは消せない（GAS側でも拒否する。追加修正⑳）
+    if(anySegApproved){showToast("承認済みの店舗の分があるためリセットできません。管理者に差戻しを依頼してください","warning");return;}
     // 提出済み等でスプレッドシートに保存済みのものは、そちらも削除する。
     // 削除できたことを確認してから画面を消す（画面だけ消えて残るのを防ぐ）
     const existing=records[currentUser.id]?.[editDate];
@@ -1906,6 +2242,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     });
     setForm({clockIn:"",clockOut:"",breaks:[{start:"",end:""}],travelTimes:[{start:"",end:""}],note:""});
     setSelectedStore(currentUser.store||"");
+    setExtra([]);
     showToast(editDate+"のデータをリセットしました");
   };
   // 差戻し中の日の知らせ。2026年9月（総点検）：以前は「今選んでいる月」の分しか出なかったため、
@@ -1975,16 +2312,18 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
       ),
       // 日次入力タブ
       activeTab==="today"&&e("div",null,
-        // 対象店舗（承認済みのみ変更不可）
+        // 対象店舗（承認済みのみ変更不可）。店舗②③があるときは「店舗①」と表示し、その店舗の分の状態も並べる（追加修正⑳）
         e("div",{style:{marginBottom:14}},
-          e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("対象店舗","Store",isBi)),
+          e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},
+            (extra.length||isMultiSeg(rec))?L("店舗①","Store 1",isBi):L("対象店舗","Store",isBi)),
           e("div",{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
             storeLocked
               ?e("div",{style:{width:200,maxWidth:"100%",flex:"1 1 160px",padding:"9px 12px",border:"1.5px solid #e2e8f0",borderRadius:8,background:"#f1f5f9",color:"#475569",fontSize:14,fontWeight:600}},selectedStore||"—")
               :e("select",{value:selectedStore,onChange:ev=>setSelectedStore(ev.target.value),className:"input-field",style:{width:200,maxWidth:"100%",flex:"1 1 160px"}},
                   allStores.filter(s=>!INACTIVE_STORES.includes(s)).map(s=>e("option",{key:s,value:s},s))
                 ),
-            e("span",{className:`status-badge ${S_CLASS[rec.status||"draft"]}`},S_LABEL[rec.status||"draft"]),
+            e("span",{className:`status-badge ${S_CLASS[(savedSegs?segStatus(0):rec.status)||"draft"]}`},S_LABEL[(savedSegs?segStatus(0):rec.status)||"draft"]),
+            savedSegs&&savedSegs.length>1&&e("span",{style:{fontSize:11,color:"#94a3b8"}},L("（この日全体：","(Day: ",isBi)+S_LABEL[effStatus(rec)||"draft"]+L("）",")",isBi)),
             storeLocked&&e("span",{style:{fontSize:11,color:"#94a3b8",fontWeight:600}},
               L("🔒 承認済みのため変更できません","🔒 Locked (approved)",isBi))
           )
@@ -2004,98 +2343,53 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
         ),
         // 出退勤
         e("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}},
-          e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("出勤時刻","Clock In",isBi)),e("input",{type:"time",value:form.clockIn,onChange:ev=>{const v=ev.target.value;setForm(f=>({...f,clockIn:v}));checkExistingAfterClock(v,form.clockOut);},className:"input-field",disabled:!canEdit})),
-          e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("退勤時刻","Clock Out",isBi)),e("input",{type:"time",value:form.clockOut,onChange:ev=>{const v=ev.target.value;setForm(f=>({...f,clockOut:v}));checkExistingAfterClock(form.clockIn,v);},className:"input-field",disabled:!canEdit}))
+          e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("出勤時刻","Clock In",isBi)),e("input",{type:"time",value:form.clockIn,onChange:ev=>{const v=ev.target.value;setForm(f=>({...f,clockIn:v}));checkExistingAfterClock(v,form.clockOut);},className:"input-field",disabled:!canEdit0})),
+          e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("退勤時刻","Clock Out",isBi)),e("input",{type:"time",value:form.clockOut,onChange:ev=>{const v=ev.target.value;setForm(f=>({...f,clockOut:v}));checkExistingAfterClock(form.clockIn,v);},className:"input-field",disabled:!canEdit0}))
         ),
         // 休憩
         e("div",{style:{marginBottom:14}},
           e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
             e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700}},L("休憩時間","Break",isBi)),
-            canEdit&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,breaks:[...f.breaks,{start:"",end:""}]})),style:{fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #1e3a5f",background:"white",color:"#1e3a5f",cursor:"pointer",fontWeight:700}},L("＋ 追加","＋ Add",isBi))
+            canEdit0&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,breaks:[...f.breaks,{start:"",end:""}]})),style:{fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #1e3a5f",background:"white",color:"#1e3a5f",cursor:"pointer",fontWeight:700}},L("＋ 追加","＋ Add",isBi))
           ),
           ...form.breaks.map((b,i)=>e("div",{key:i,style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
             e("span",{style:{fontSize:11,color:"#94a3b8",width:16,textAlign:"right",flexShrink:0}},i+1),
-            e("input",{type:"time",value:b.start,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast("出勤〜退勤の範囲内で入力してください","warning");return;}setForm(f=>{const bs=[...f.breaks];bs[i]={...bs[i],start:v};return{...f,breaks:bs};});},className:"input-field",disabled:!canEdit,style:{flex:1}}),
+            e("input",{type:"time",value:b.start,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast("出勤〜退勤の範囲内で入力してください","warning");return;}setForm(f=>{const bs=[...f.breaks];bs[i]={...bs[i],start:v};return{...f,breaks:bs};});},className:"input-field",disabled:!canEdit0,style:{flex:1}}),
             e("span",{style:{color:"#94a3b8",fontSize:12}},"〜"),
-            e("input",{type:"time",value:b.end,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast("出勤〜退勤の範囲内で入力してください","warning");return;}setForm(f=>{const bs=[...f.breaks];bs[i]={...bs[i],end:v};return{...f,breaks:bs};});},className:"input-field",disabled:!canEdit,style:{flex:1}}),
-            canEdit&&form.breaks.length>1&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,breaks:f.breaks.filter((_,j)=>j!==i)})),style:{fontSize:12,width:24,height:24,borderRadius:"50%",border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:700}},"×")
+            e("input",{type:"time",value:b.end,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast("出勤〜退勤の範囲内で入力してください","warning");return;}setForm(f=>{const bs=[...f.breaks];bs[i]={...bs[i],end:v};return{...f,breaks:bs};});},className:"input-field",disabled:!canEdit0,style:{flex:1}}),
+            canEdit0&&form.breaks.length>1&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,breaks:f.breaks.filter((_,j)=>j!==i)})),style:{fontSize:12,width:24,height:24,borderRadius:"50%",border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:700}},"×")
           ))
         ),
         // 移動時間（モノレールを選んだ日のみ）
         isConstruction&&e("div",{style:{marginBottom:14}},
           e("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:6}},
             e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700}},L("移動時間","Travel Time",isBi)),
-            canEdit&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,travelTimes:[...f.travelTimes,{start:"",end:""}]})),style:{fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #1e3a5f",background:"white",color:"#1e3a5f",cursor:"pointer",fontWeight:700}},L("＋ 追加","＋ Add",isBi))
+            canEdit0&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,travelTimes:[...f.travelTimes,{start:"",end:""}]})),style:{fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #1e3a5f",background:"white",color:"#1e3a5f",cursor:"pointer",fontWeight:700}},L("＋ 追加","＋ Add",isBi))
           ),
           ...(form.travelTimes||[{start:"",end:""}]).map((t,i)=>e("div",{key:i,style:{display:"flex",gap:8,alignItems:"center",marginBottom:6}},
             e("span",{style:{fontSize:11,color:"#94a3b8",width:16,textAlign:"right",flexShrink:0}},i+1),
-            e("input",{type:"time",value:t.start,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast(L("出勤〜退勤の範囲内で入力してください","Enter within clock in–out range",isBi),"warning");return;}setForm(f=>{const ts=[...f.travelTimes];ts[i]={...ts[i],start:v};return{...f,travelTimes:ts};});},className:"input-field",disabled:!canEdit,style:{flex:1}}),
+            e("input",{type:"time",value:t.start,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast(L("出勤〜退勤の範囲内で入力してください","Enter within clock in–out range",isBi),"warning");return;}setForm(f=>{const ts=[...f.travelTimes];ts[i]={...ts[i],start:v};return{...f,travelTimes:ts};});},className:"input-field",disabled:!canEdit0,style:{flex:1}}),
             e("span",{style:{color:"#94a3b8",fontSize:12}},"〜"),
-            e("input",{type:"time",value:t.end,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast(L("出勤〜退勤の範囲内で入力してください","Enter within clock in–out range",isBi),"warning");return;}setForm(f=>{const ts=[...f.travelTimes];ts[i]={...ts[i],end:v};return{...f,travelTimes:ts};});},className:"input-field",disabled:!canEdit,style:{flex:1}}),
-            canEdit&&(form.travelTimes||[]).length>1&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,travelTimes:f.travelTimes.filter((_,j)=>j!==i)})),style:{fontSize:12,width:24,height:24,borderRadius:"50%",border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:700}},"×")
+            e("input",{type:"time",value:t.end,onChange:ev=>{const v=ev.target.value;if(v&&!isWithinShift(v)){showToast(L("出勤〜退勤の範囲内で入力してください","Enter within clock in–out range",isBi),"warning");return;}setForm(f=>{const ts=[...f.travelTimes];ts[i]={...ts[i],end:v};return{...f,travelTimes:ts};});},className:"input-field",disabled:!canEdit0,style:{flex:1}}),
+            canEdit0&&(form.travelTimes||[]).length>1&&e("button",{type:"button",onClick:()=>setForm(f=>({...f,travelTimes:f.travelTimes.filter((_,j)=>j!==i)})),style:{fontSize:12,width:24,height:24,borderRadius:"50%",border:"none",background:"#fee2e2",color:"#dc2626",cursor:"pointer",fontWeight:700}},"×")
           ))
         ),
-        // 同日に別店舗の出勤がある場合（チェックすると時間・店舗の入力欄が出る）
-        e("div",{style:{marginBottom:12}},
-          e("label",{style:{display:"flex",alignItems:"center",gap:8,cursor:canEdit?"pointer":"not-allowed",fontSize:13,fontWeight:600,color:canEdit?"#1e3a5f":"#94a3b8"}},
-            e("input",{type:"checkbox",checked:showSubStore,disabled:!canEdit,
-              onChange:ev=>{
-                const on=ev.target.checked;
-                setShowSubStore(on);
-                // チェックを外したら、追加した別店舗の記録だけを備考から取り除く
-                // （手入力した文言は残す）
-                if(!on){
-                  setForm(f=>{
-                    const kept=(f.note||"").split(" / ")
-                      .filter(s=>s.trim()&&!/^\d{1,2}:\d{2}-\d{1,2}:\d{2}\s+\S/.test(s.trim()));
-                    return {...f,note:kept.join(" / ")};
-                  });
-                }
-              },style:{width:16,height:16,cursor:canEdit?"pointer":"not-allowed"}}),
-            L("同日に別店舗の出勤がある","Worked at another store today",isBi)
-          ),
-          showSubStore&&e("div",{style:{marginTop:10,padding:"12px 14px",background:"#f8faff",border:"1.5px solid #dbeafe",borderRadius:10}},
-            e("div",{style:{fontSize:11,color:"#64748b",fontWeight:700,marginBottom:8}},
-              L("別店舗の時間帯を選んで「追加」を押すと、備考欄に記録されます","Select the time and store, then press Add",isBi)),
-            e("div",{style:{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}},
-              e("input",{type:"time",value:subFrom,onChange:ev=>setSubFrom(ev.target.value),className:"input-field",style:{width:120,flex:"1 1 100px",minWidth:0},disabled:!canEdit}),
-              e("span",{style:{color:"#94a3b8"}},"〜"),
-              e("input",{type:"time",value:subTo,onChange:ev=>setSubTo(ev.target.value),className:"input-field",style:{width:120,flex:"1 1 100px",minWidth:0},disabled:!canEdit}),
-              e("select",{value:subStore,onChange:ev=>setSubStore(ev.target.value),className:"input-field",style:{width:180,maxWidth:"100%",flex:"1 1 140px"},disabled:!canEdit},
-                allStores.filter(s=>!INACTIVE_STORES.includes(s)).map(s=>e("option",{key:s,value:s},s))
-              ),
-              e("button",{type:"button",disabled:!canEdit,className:"btn btn-primary",style:{fontSize:13,padding:"8px 18px"},
-                onClick:()=>{
-                  if(!subFrom||!subTo){showToast("時間を入力してください","warning");return;}
-                  const txt=subFrom.slice(0,5)+"-"+subTo.slice(0,5)+" "+subStore;
-                  setForm(f=>({...f,note:f.note?f.note+" / "+txt:txt}));
-                  setSubFrom("");setSubTo("");
-                }},"＋ "+L("追加","Add",isBi))
-            ),
-            e("div",{style:{marginTop:10,padding:"10px 12px",background:"white",border:"1.5px solid #bfdbfe",borderRadius:8}},
-              e("div",{style:{fontSize:11,fontWeight:700,color:"#1e40af",marginBottom:6}},
-                L("📌 入力のしかた","How to enter",isBi)),
-              e("div",{style:{fontSize:11,color:"#475569",lineHeight:1.8}},
-                L("① 出勤・退勤は、1日の最初の出勤〜最後の退勤を入力","1. Clock in/out = first in and last out of the day",isBi),
-                e("br"),
-                L("② 店舗の移動でできた空き時間は「休憩」に追加","2. Add the gap between stores as a break",isBi),
-                e("br"),
-                L("③ 各店舗でとった休憩も、それぞれ「休憩」に追加","3. Add breaks taken at each store as well",isBi)
-              ),
-              e("div",{style:{fontSize:10.5,color:"#64748b",marginTop:8,paddingTop:8,borderTop:"1px dashed #cbd5e1",lineHeight:1.7}},
-                L("例）カリッジュ 9:00-17:00（休憩12:00-13:00）／ GOLF BAR 21:00-24:00（休憩22:00-22:30）の場合",
-                  "Example: Store A 9:00-17:00 (break 12:00-13:00) / Store B 21:00-24:00 (break 22:00-22:30)",isBi),
-                e("br"),
-                L("　出勤 9:00 ／ 退勤 24:00","　In 9:00 / Out 24:00",isBi),
-                e("br"),
-                L("　休憩 12:00-13:00、17:00-21:00（移動）、22:00-22:30","　Breaks 12:00-13:00, 17:00-21:00 (gap), 22:00-22:30",isBi)
-              )
-            )
-          )
-        ),
-        // 備考
+        // 備考（店舗①）
         e("div",{style:{marginBottom:16}},
-          e("input",{type:"text",value:form.note,onChange:ev=>setForm(f=>({...f,note:ev.target.value})),className:"input-field",placeholder:L("備考（任意）","Note (optional)",isBi),disabled:!canEdit})
+          e("input",{type:"text",value:form.note,onChange:ev=>setForm(f=>({...f,note:ev.target.value})),className:"input-field",placeholder:(extra.length||isMultiSeg(rec))?L("店舗①の備考（任意）","Note for store 1 (optional)",isBi):L("備考（任意）","Note (optional)",isBi),disabled:!canEdit0})
+        ),
+        // 同日に別の店舗でも働いた日：店舗②③の入力欄（2026年9月・追加修正⑳）。店舗ごとに出勤・退勤・休憩・移動・備考を入れる。
+        // 店舗の間の空き時間は自動で除かれる（休憩に入れる必要はない）。承認済みの店舗の分は固定。承認済みの分がある日は店舗の追加・削除はできない
+        ...extra.map((sg,i)=>e(SubStoreEditor,{key:"ex"+i,idx:i+1,seg:sg,status:segStatus(i+1),rejectReason:savedSegs&&savedSegs[i+1]?savedSegs[i+1].rejectReason:"",
+          disabled:!canEdit||segStatus(i+1)==="approved",canRemove:canEdit&&!anySegApproved,isBi,allStores:allStores.filter(x=>!INACTIVE_STORES.includes(x)),
+          prevSeg:formSegs()[i],
+          onChange:next=>setExtra(ex=>ex.map((x,j)=>j===i?next:x)),
+          onRemove:()=>setExtra(ex=>ex.filter((_,j)=>j!==i)),showToast})),
+        canEdit&&!anySegApproved&&extra.length<MAX_SEGS-1&&e("div",{style:{marginBottom:16}},
+          e("button",{type:"button",className:"btn btn-outline",style:{fontSize:13,padding:"7px 16px"},
+            onClick:()=>setExtra(ex=>[...ex,{store:ALL_STORES.filter(x=>!INACTIVE_STORES.includes(x)&&x!==selectedStore)[0]||selectedStore,clockIn:"",clockOut:"",breaks:[{start:"",end:""}],travelTimes:[{start:"",end:""}],note:""}])},
+            "＋ "+L("同じ日に別の店舗でも働いた（店舗を追加）","Add another store for this day",isBi)),
+          e("div",{style:{fontSize:11,color:"#94a3b8",marginTop:4}},L("店舗ごとに出勤・退勤・休憩を入れます。店舗の間の空き時間は自動で除かれます（休憩に入れる必要はありません）。承認はその店舗の店長が行います。","Enter clock in/out and breaks per store. Gaps between stores are excluded automatically; each store's manager approves their part.",isBi))
         ),
         // 退勤が出勤より早い場合の日またぎ警告
         form.clockIn&&form.clockOut&&form.clockOut<form.clockIn&&e("div",{style:{background:"#fff3cd",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#856404",fontWeight:600}},
@@ -2151,7 +2445,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
             e("div",{style:{fontSize:11.5,marginTop:3}},
               L("管理者には届いていません。「再提出する」を押してください。","Not delivered. Please press Resubmit.",isBi))),
           e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8}},
-            e(ResetButton,{date:editDate,onConfirm:doReset}),
+            !anySegApproved&&e(ResetButton,{date:editDate,onConfirm:doReset}),
             e("button",{className:"btn btn-primary",disabled:submitting,onClick:()=>doSave(true)},submitting?L("送信中…","Sending…",isBi):L("再提出する","Resubmit",isBi))
           )
         ),
@@ -2173,7 +2467,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
             )
           ),
           e("div",{style:{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8}},
-            e(ResetButton,{date:editDate,onConfirm:doReset}),
+            !anySegApproved&&e(ResetButton,{date:editDate,onConfirm:doReset}),
             e("button",{className:"btn btn-primary",disabled:submitting,onClick:()=>doSave(true)},submitting?L("送信中…","Sending…",isBi):L("再提出する","Resubmit",isBi))
           )
         ),
@@ -2988,8 +3282,8 @@ function App(){
     const dd=allDays.map(r=>{
       // 保存時に記録した時給を優先（後から時給変更しても過去月は変わらない）
       const c=calcRecord({...r,hourlyWage:r.hourlyWage!=null?r.hourlyWage:(emp?.hourlyWage??1000)});
-      // 給与・労働日数は承認済みのみカウント
-      if(r.status==="approved"){
+      // 給与・労働日数は承認済みのみカウント（複数店舗の日は、全部の店舗が承認済みのときだけ。追加修正⑳）
+      if(effStatus(r)==="approved"){
         tw+=c.workMinutes;to+=c.overtimeMinutes;tl+=c.lateNightMinutes;wd++;
         tNormalM+=c.normalMinutes;tNormalP+=c.normalPayRaw;
         tOtOnlyM+=c.otOnlyMinutes;tOtOnlyP+=c.otOnlyPayRaw;
