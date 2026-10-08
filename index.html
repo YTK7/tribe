@@ -1012,9 +1012,10 @@ function HelpModal({isAdmin,isOwner,onClose}){
        "・休憩が入っているか（長時間なのに休憩なしは要確認）",e("br",{key:"2"}),
        "・対象店舗が正しいか",e("br",{key:"3"}),
        "・出勤しているのに入力されていない日がないか"]),
-    qa("同じ日に2つの店舗で働いた日",
-      ["店舗ごとに行が分かれ、",e("b",{key:"1"},"その店舗の担当店長だけ"),"が承認・差戻しできます（オーナーは全部）。他店舗の行には「○○の店長が承認」と表示されます。",e("br",{key:"2"}),
-       "他店舗の従業員が自分の店舗で働いた日は、承認管理の「○○で働いた他店舗の従業員」に出ます。",e("br",{key:"3"}),
+    qa("他の店舗で働いた日・同じ日に2つの店舗で働いた日",
+      ["承認・差戻しできるのは、",e("b",{key:"1"},"その日に働いた店舗の担当店長"),"です（オーナーは全部）。1店舗だけの日も同じです（例：モノレール所属の人がイベント出店で働いた日は、イベント出店の担当店長が承認）。他店舗の行には「○○の店長が承認」と表示されます。",e("br",{key:"2"}),
+       "ただし、担当店長が1人もいない店舗（例：土木）で働いた日は、今までどおり所属店舗の店長が承認します。",e("br",{key:"2b"}),
+       "同じ日に2つの店舗で働いた日は店舗ごとに行が分かれます。他店舗の従業員が自分の店舗で働いた日は、承認管理の「○○で働いた他店舗の従業員」に出ます。",e("br",{key:"3"}),
        "その日の労働時間・給与は、全部の店舗の行が承認済みになって初めて集計に入ります。月締めも、その人の全部の行（他店舗の分も）が承認済みでないとできません。"]),
 
     h(2,"承認したあとの修正"),
@@ -1065,7 +1066,7 @@ function HelpModal({isAdmin,isOwner,onClose}){
         ["従業員設定で役割を「管理者」に変更し、担当店舗を選びます。",e("br",{key:"1"}),e("br",{key:"2"}),
          "同じ店舗に管理者が2人いると",e("b",{key:"3"},"お互いの勤怠を承認し合えます"),"。"]),
       qa("誰が承認できるのか",
-        ["・管理者 → 担当店舗の従業員、および同じ店舗の他の管理者",e("br",{key:"1"}),
+        ["・管理者 → 担当店舗の従業員、および同じ店舗の他の管理者（他の店舗で働いた日は、その店舗の担当店長）",e("br",{key:"1"}),
          "・オーナー → 全員（自分自身も含む）",e("br",{key:"2"}),
          "・自分で自分は承認できません（オーナーを除く）"])
     )
@@ -1535,21 +1536,31 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   // ===== 同日に複数店舗で働いた日の、店舗ごとの承認（2026年9月・追加修正⑳） =====
   // 内訳（店舗ごとの行）は「その行の店舗の担当管理者」だけが承認・差戻しできる（オーナーは全部）。
   // 例）JP所属の人のGOLFの行は、GOLFの店長が承認する（JPの店長は承認できない）。
-  // 旧方式（内訳なし）の記録は今までどおり「本人の所属店舗の担当管理者」が承認する
+  // 2026年10月・追加修正㉑：1店舗だけの日も「その日に働いた店舗の担当管理者」が承認する（2店舗の日と同じルールに統一）。
+  //   以前は1店舗だけの日は「本人の所属店舗の担当管理者」が承認していたため、モノレール所属の人がイベント出店だけで働いた日は、
+  //   イベント出店の担当管理者の承認管理に出なかった（モノレールの店長が承認する扱いだった）。
+  //   ただし、その日の店舗を担当する管理者が（本人以外に）1人もいない店舗（土木など）は、承認が止まらないよう
+  //   従来どおり「本人の所属店舗の担当管理者」が承認する。データなしの日（差戻し用の空行）は所属店舗で判定する
+  const rowStore=(emp,rec,seg)=>{
+    if(rec&&isMultiSeg(rec))return seg?seg.store:"";
+    return (rec&&rec.store)||(emp&&emp.store)||"";
+  };
+  const hasStoreManager=(store,emp)=>(admins||[]).some(a=>a.role==="admin"&&a.id!==(emp&&emp.id)&&(a.managedStores||[a.store]).includes(store));
   const canApproveSeg=(emp,rec,seg)=>{
     if(!emp)return false;
     if(emp.id===currentUser.id)return isOwner;
     if(emp.role==="superadmin")return isOwner;
     if(isOwner)return true;
-    if(rec&&isMultiSeg(rec))return managedStores.includes(seg?seg.store:"");
-    return managedStores.includes(emp.store);
+    const st=rowStore(emp,rec,seg);
+    if(managedStores.includes(st))return true;
+    return !hasStoreManager(st,emp)&&managedStores.includes(emp.store);
   };
   const monthRecsOf=emp=>Object.values(records[emp.id]||{}).filter(r=>r.date?.startsWith(approvalMonth));
-  // その月に、担当店舗で働いた「他店舗所属」の従業員（応援）。担当店舗の行だけ承認できる
+  // その月に、担当店舗で働いた「他店舗所属」の従業員（応援）。担当店舗の行だけ承認できる（1店舗だけの日も含む。追加修正㉑）
   const helperStaff=[...allStaffMap.values()].filter(emp=>
     !targetStaff.some(x=>x.id===emp.id)&&emp.id!==currentUser.id&&emp.role!=="superadmin"&&
-    monthRecsOf(emp).some(r=>isMultiSeg(r)&&r.segs.some(sg=>managedStores.includes(sg.store))));
-  const helperGroups=managedStores.map(store=>[store,helperStaff.filter(emp=>monthRecsOf(emp).some(r=>isMultiSeg(r)&&r.segs.some(sg=>sg.store===store)))]).filter(g=>g[1].length>0);
+    monthRecsOf(emp).some(r=>recSegs(r).some(sg=>canApproveSeg(emp,r,sg))));
+  const helperGroups=managedStores.map(store=>[store,helperStaff.filter(emp=>monthRecsOf(emp).some(r=>recSegs(r).some(sg=>rowStore(emp,r,sg)===store&&canApproveSeg(emp,r,sg))))]).filter(g=>g[1].length>0);
   // 自分が承認できる承認待ちの行数／差戻し中の行数（内訳1行＝1件。旧方式は1日＝1件）
   const countSegs=(emp,st,onlyMine)=>monthRecsOf(emp).reduce((n,r)=>n+recSegs(r).filter(sg=>sg.status===st&&(!onlyMine||canApproveSeg(emp,r,sg))).length,0);
 
