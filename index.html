@@ -876,6 +876,82 @@ function RejectModal({empName,date,onSubmit,onCancel}){
   );
 }
 
+// ===== オーナーによる勤怠の削除（2026年10月・追加修正㉒） =====
+// 承認管理の行の「🗑 削除」から開く。削除理由（必須）とオーナーのパスワードを確認してから削除する。
+// 2店舗以上の日は押した店舗の分だけ消える（残った店舗の分はそのままの状態で、労働時間は残った分だけで計算し直す）
+const DELETE_REASONS=["本人と連絡が取れない","出勤していない","入力の間違い（日付など）","その他"];
+function OwnerDeleteModal({currentUser,empName,rec,idx,busy,onSubmit,onCancel}){
+  const [picked,setPicked]=useState("");
+  const [free,setFree]=useState("");
+  const [pw,setPw]=useState("");
+  const [err,setErr]=useState(null);
+  const [checking,setChecking]=useState(false);
+  const segs=recSegs(rec);
+  const target=segs[idx]||segs[0]||{};
+  const rest=segs.filter((_,i)=>i!==idx).filter(x=>x.clockIn||x.clockOut);
+  const segText=sg=>(STORE_ABBR[sg.store]||sg.store||"—")+"　"+(sg.clockIn||"—")+"〜"+(sg.clockOut||"—");
+  const go=async()=>{
+    if(busy||checking)return;
+    if(!picked){setErr("削除する理由を選んでください");return;}
+    if(picked==="その他"&&!free.trim()){setErr("理由の内容を入力してください");return;}
+    if(!pw){setErr("オーナーのパスワードを入力してください");return;}
+    setChecking(true);
+    const ok=await verifyPassword(currentUser,pw);
+    if(!ok){setChecking(false);setErr("パスワードが違います");return;}
+    const hash=await sha256(pw);
+    setChecking(false);
+    onSubmit(free.trim()?picked+"："+free.trim():picked,hash);
+  };
+  const lbl=t=>e("div",{style:{fontSize:12,color:"#64748b",fontWeight:700,marginBottom:6}},t);
+  return e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:1000,
+    display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}},
+    e("div",{"data-testid":"owner-delete-modal",style:{background:"white",borderRadius:18,width:"100%",maxWidth:420,padding:22,margin:"auto"}},
+      e("div",{style:{fontSize:17,fontWeight:700,color:"#991b1b",textAlign:"center"}},"🗑 勤怠の削除（オーナー）"),
+      e("div",{style:{fontSize:12.5,color:"#94a3b8",margin:"4px 0 14px",textAlign:"center"}},empName+"　"+rec.date),
+      e("div",{style:{background:"#f8fafc",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 12px",fontSize:13,marginBottom:12,lineHeight:1.8}},
+        e("div",null,e("b",null,"削除する分："),segText(target)," ",
+          target.status&&e("span",{className:`status-badge ${S_CLASS[target.status]}`,style:{fontSize:10}},S_LABEL[target.status])),
+        rest.length>0&&e("div",null,e("b",null,"残る分："),
+          ...rest.map((sg,i)=>e("span",{key:i,style:{marginRight:8}},segText(sg)," ",
+            e("span",{className:`status-badge ${S_CLASS[sg.status||"draft"]}`,style:{fontSize:10}},S_LABEL[sg.status||"draft"]))))
+      ),
+      e("div",{style:{background:"#fef3c7",border:"1.5px solid #fcd34d",color:"#92400e",borderRadius:10,padding:"9px 12px",fontSize:12,lineHeight:1.75,marginBottom:14}},
+        rest.length>0
+          ?["押した店舗の分だけ削除します。残る分はそのままの状態です（承認済みの分は承認済みのまま集計に入ります）。",e("br",{key:"b1"}),
+            "実労働時間・時間外・深夜は、残る分だけで計算し直されます。"]
+          :["この日の記録をまるごと削除します。本人の画面では「データなし」になります。"],
+        e("br",{key:"b2"}),
+        e("b",{key:"b3"},"元に戻せません。"),"本人には通知されないので、LINEなどで伝えてください。"
+      ),
+      lbl("削除する理由（必須・操作履歴に残ります）"),
+      e("div",{style:{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}},
+        ...DELETE_REASONS.map(r=>e("button",{key:r,type:"button",
+          onClick:()=>{setPicked(r);setErr(null);},
+          style:{padding:"7px 12px",borderRadius:20,fontFamily:"inherit",fontSize:12.5,fontWeight:700,cursor:"pointer",
+            border:"1.5px solid "+(picked===r?"#991b1b":"#cbd5e1"),
+            background:picked===r?"#991b1b":"white",color:picked===r?"white":"#475569"}},r))
+      ),
+      e("textarea",{value:free,onChange:ev=>{setFree(ev.target.value);setErr(null);},
+        placeholder:picked==="その他"?"内容（必須）":"補足（任意）",
+        style:{width:"100%",padding:"9px 12px",border:"1.5px solid #d1d5db",borderRadius:8,
+          fontFamily:"inherit",fontSize:14,resize:"vertical",minHeight:56,outline:"none",marginBottom:12}}),
+      lbl("🔒 オーナーのパスワード"),
+      e("input",{type:"password",value:pw,
+        onChange:ev=>{setPw(ev.target.value);setErr(null);},
+        onKeyDown:ev=>{if(ev.key==="Enter")go();},
+        placeholder:"パスワード",
+        style:{width:"100%",padding:"10px 12px",border:"1.5px solid #d1d5db",borderRadius:8,
+          fontFamily:"inherit",fontSize:15,outline:"none",boxSizing:"border-box"}}),
+      err&&e("p",{style:{color:"#dc2626",fontSize:12,fontWeight:700,marginTop:8}},err),
+      e("div",{style:{display:"flex",flexDirection:"column",gap:8,marginTop:16}},
+        e("button",{className:"btn btn-danger",style:{width:"100%"},disabled:busy||checking,onClick:go},(busy||checking)?"削除中…":"削除する"),
+        e("button",{onClick:onCancel,disabled:busy,style:{width:"100%",padding:8,border:"none",background:"none",
+          color:"#94a3b8",fontSize:12.5,cursor:"pointer",fontFamily:"inherit",textDecoration:"underline"}},"キャンセル")
+      )
+    )
+  );
+}
+
 // ===== 本人確認モーダル（月締め・解除はオーナー限定＋パスワード確認） =====
 function OwnerPasswordModal({currentUser,actionLabel,onCancel,onConfirm}){
   const [pw,setPw]=useState("");
@@ -1060,6 +1136,11 @@ function HelpModal({isAdmin,isOwner,onClose}){
       h(7,"オーナーの操作"),
       qa("パスワードを忘れたと言われた","従業員設定から、その人の「パスワード初期化」を押すと初期パスワードに戻ります。"),
       qa("従業員が辞めた","従業員設定から削除できます。過去の勤怠記録は残ります。"),
+      qa("本人と連絡が取れない日の勤怠を消したい",
+        ["承認管理でその人を選び、その日の行の「🗑 削除」を押します（オーナーのみ）。削除する理由とオーナーのパスワードを入れると削除されます。操作履歴に理由つきで残ります。",e("br",{key:"1"}),
+         "消せるのは",e("b",{key:"2"},"承認待ち・差戻し中の分だけ"),"です（承認済みの分・月締め済みの月は消せません）。",e("br",{key:"3"}),
+         "同じ日に2つの店舗で働いた日は、押した店舗の分だけ消えます。残った店舗の分はそのままの状態で（承認済みなら承認済みのまま）集計に入り、労働時間は残った分だけで計算し直されます。",e("br",{key:"4"}),
+         "元に戻せません。本人には通知されないので、LINEなどで伝えてください。"]),
       qa("時給が変わった",["従業員設定の「編集」から変更します。保存するとき「何月分から」を選ぶと、",e("b",{key:"b"},"その月以降の記録（承認済みの日も含む）が新しい時給で計算し直されます"),"（初期値は当月）。",e("br",{key:"1"}),
          "月締め済みの月と、それより前の月の金額は変わりません。月給制の方には関係ありません。"]),
       qa("管理者を増やしたい",
@@ -1646,6 +1727,44 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     if(!ok){showToast(failMsg("取り消せませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
     showToast("差戻しを取り消しました");
   };
+  // ===== オーナーによる削除（2026年10月・追加修正㉒） =====
+  // 承認待ち・差戻し中の行だけ。2店舗以上の日は押した店舗の分だけ消す（GAS側 deleteSegByOwner でも同じルールで確認する）
+  const [deleteTarget,setDeleteTarget]=useState(null);   // {empId,date,idx}
+  const [deleting,setDeleting]=useState(false);
+  const askOwnerDelete=(empId,date,idx)=>{
+    if(!isOwner)return;
+    if(empClosed(empId)){showToast("月締め済みです。月締めを解除してから削除してください。","warning");return;}
+    setDeleteTarget({empId,date,idx:idx||0});
+  };
+  const doOwnerDelete=async(reason,passHash)=>{
+    const {empId,date,idx}=deleteTarget;
+    const rec=records[empId]?.[date];
+    if(!rec){setDeleteTarget(null);showToast("この記録はすでにありません","warning");return;}
+    const label=segLabel(rec,idx);
+    const multi=isMultiSeg(rec)&&rec.segs.length>1;
+    const log=makeLog(me,"削除（オーナー）",nameOfStaff(empId),date+label,reason);
+    setDeleting(true);
+    let r=null;
+    try{ r=await gasPost("deleteSegByOwner",{empId,date,segIdx:idx,byId:currentUser.id,passHash,seen:rec,log}); }catch(err){ r=null; }
+    setDeleting(false);
+    if(r&&/不明なaction/.test(String(r.error||""))){showToast("削除できませんでした（GASが古い版です。GASを先に更新してください）","warning");return;}
+    if(r&&r.refused){
+      lastRefusal=r.error||null;setDeleteTarget(null);
+      if(onRefusalReload)onRefusalReload();
+      showToast(failMsg("削除できませんでした"),"warning");return;
+    }
+    if(!r||r.success===false){showToast("削除できませんでした。通信環境を確認して、もう一度お試しください。","warning");return;}
+    markLocalRecWrite(empId,date);
+    setRecords(prev=>{
+      const empRecs={...(prev[empId]||{})};
+      if(r.record)empRecs[date]={...r.record,synced:true};
+      else delete empRecs[date];
+      return {...prev,[empId]:empRecs};
+    });
+    afterLogResult(r,log);
+    setDeleteTarget(null);
+    showToast(nameOfStaff(empId)+"の"+date+(multi?label:"")+"を削除しました。本人にLINEなどで伝えてください。");
+  };
   // 自分が承認できる承認待ちの行を、1日ずつまとめた記録にして返す（一括承認用）
   const approvableDays=()=>selRecs.filter(r=>r.status!==null).map(r=>{
     const segs=recSegs(r);
@@ -1787,6 +1906,16 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
   };
 
   return e("div",null,
+    // オーナーによる削除（追加修正㉒）
+    deleteTarget&&records[deleteTarget.empId]?.[deleteTarget.date]&&e(OwnerDeleteModal,{
+      currentUser,
+      empName:nameOfStaff(deleteTarget.empId),
+      rec:records[deleteTarget.empId][deleteTarget.date],
+      idx:deleteTarget.idx,
+      busy:deleting,
+      onSubmit:doOwnerDelete,
+      onCancel:()=>{ if(!deleting)setDeleteTarget(null); }
+    }),
     // 差戻し理由の入力
     rejectTarget&&e(RejectModal,{
       empName:nameOfStaff(rejectTarget.empId),
@@ -1915,17 +2044,23 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
           return segs.map((sg,idx)=>{
             const can=canApproveSeg(selEmp,r,sg);
             const segHasData=!!(sg.clockIn||sg.clockOut);
+            // オーナーだけ、承認待ち・差戻し中の行に「🗑 削除」を出す（追加修正㉒。データなしの空行には出さない）
+            const delBtn=isOwner&&!closed&&(sg.status==="submitted"||sg.status==="rejected")&&records[r.empId]?.[r.date]
+              ?e("button",{className:"btn btn-outline","data-testid":"owner-delete",style:{fontSize:11,padding:"3px 9px",color:"#991b1b",borderColor:"#fca5a5"},
+                  title:"この行を削除（オーナーのみ）",onClick:()=>askOwnerDelete(r.empId,r.date,idx)},"🗑 削除"):null;
             const ops=sg.status==="approved"
               ?e("div",{style:{display:"flex",gap:6}},
                 e("span",{style:{color:"#059669",fontSize:12}},"✓ 承認済"),
                 can&&!closed&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date,idx)},"差戻し"))
               :sg.status==="rejected"
                 ?e("div",{style:{display:"flex",gap:6}},
-                  can&&!closed&&e("button",{className:"btn btn-warning",style:{fontSize:11,padding:"4px 10px"},onClick:()=>undoReject(r,idx)},"差戻し取消"))
+                  can&&!closed&&e("button",{className:"btn btn-warning",style:{fontSize:11,padding:"4px 10px"},onClick:()=>undoReject(r,idx)},"差戻し取消"),
+                  delBtn)
                 :e("div",{style:{display:"flex",gap:6}},
                   segHasData&&can&&!closed&&e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>approve(r.empId,r.date,idx)},"承認"),
                   can&&!closed&&e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>askReject(r.empId,r.date,idx)},"差戻し"),
-                  !can&&sg.status&&e("span",{style:{fontSize:11,color:"#94a3b8"}},(STORE_ABBR[sg.store]||sg.store)+"の店長が承認"));
+                  !can&&sg.status&&e("span",{style:{fontSize:11,color:"#94a3b8"}},(STORE_ABBR[sg.store]||sg.store)+"の店長が承認"),
+                  delBtn);
             const cells=[];
             if(idx===0)cells.push(e("td",{key:"d",rowSpan:span,style:{fontWeight:600}},r.date));
             cells.push(
