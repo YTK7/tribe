@@ -59,6 +59,14 @@ input[type="time"],input[type="date"],input[type="month"]{
 .input-field:focus{border-color:#1e3a5f}
 .tab{padding:10px 14px;border:none;background:transparent;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;color:#888;border-bottom:3px solid transparent;transition:all .15s;white-space:nowrap}
 .tab.active{color:#1e3a5f;border-bottom-color:#1e3a5f}
+/* 2026年10月・追加修正㉔：マイ勤怠のタブ。英語併記（2段）のときも中央にそろえる */
+.emp-tab{text-align:center;line-height:1.35}
+/* 2026年10月・追加修正㉗：従業員設定の表の「操作」列（編集・保存など）は右端に固定する。列が多く表が横にスクロールしても、ボタンが常に見えるようにする */
+.sticky-op{position:sticky;right:0;background:#fff;z-index:1;box-shadow:-6px 0 6px -6px rgba(0,0,0,.25)}
+/* 時刻の入力欄が親の幅より広がらないようにする（スマホ幅で休憩・移動の右側の欄が画面外にはみ出していた） */
+.input-field{min-width:0}
+/* タブレット・小さめのPC幅では、集計のカードを3列にする（6列だと「7時間30分」が2行に割れていた） */
+@media(min-width:601px) and (max-width:900px){.stat-grid{grid-template-columns:repeat(3,1fr)!important}}
 .table{width:100%;border-collapse:collapse}
 .table th{background:#f8fafc;color:#64748b;font-size:11px;font-weight:700;padding:10px 12px;text-align:left;border-bottom:2px solid #e2e8f0}
 .table td{padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px}
@@ -82,6 +90,7 @@ input[type="time"],input[type="date"],input[type="month"]{
   .nav{height:auto;min-height:56px;padding:8px 16px;gap:8px}
   .table th,.table td{padding:8px 8px;font-size:11px;white-space:nowrap}
   .tab{padding:8px 10px;font-size:12px}
+  .emp-tab{padding:8px 6px;flex:1 1 0;min-width:0;white-space:normal}
   .stat-box{padding:12px 14px}
   .pin-key{height:48px;font-size:18px}
   .stat-grid{grid-template-columns:repeat(2,1fr)!important}
@@ -130,7 +139,7 @@ const INITIAL_EMPLOYEES = [
   {id:1,name:"小川 正訓",loginId:"masakunipapa@docomo.ne.jp",role:"employee",payType:"monthly",monthlyWage:0,department:"建設部門",store:"モノレール"},
   {id:2,name:"黒田 高史",loginId:"kurodatakashi5162@gmail.com",role:"employee",payType:"monthly",monthlyWage:0,department:"建設部門",store:"モノレール"},
   {id:3,name:"高木 俊輔",loginId:"softball0829@icloud.com",role:"employee",payType:"monthly",monthlyWage:0,department:"営業部門",store:"営業"},
-  {id:4,name:"渡辺 航",loginId:"watanabe0720ko@gmail.com",role:"employee",hourlyWage:1200,department:"飲食部門",store:"JP BAR KING"},
+  {id:4,name:"渡部 航",loginId:"watanabe0720ko@gmail.com",role:"employee",hourlyWage:1200,department:"飲食部門",store:"JP BAR KING"},
   {id:5,name:"安西 泰基",loginId:"taikitan1118@gmail.com",role:"employee",payType:"monthly",monthlyWage:0,department:"営業部門",store:"営業"},
   {id:6,name:"吉田 未悠",loginId:"seojun168261@icloud.com",role:"employee",hourlyWage:1100,department:"飲食部門",store:"カリッジュ児島店"},
   {id:7,name:"赤田 英哉",loginId:"hideya411@icloud.com",role:"employee",hourlyWage:1050,department:"飲食部門",store:"カリッジュ児島店"},
@@ -266,6 +275,9 @@ const BILINGUAL_IDS=[13,14];
 //   移動時間を実働から引くかどうかは「その日の店舗がモノレールか」だけで判定する（GAS側・確定仕様と同じ）
 // ラベル定義（日本語 / English）
 function L(ja,en,isBi){return isBi?`${ja} / ${en}`:ja;}
+// 2026年10月・追加修正㉔：英語併記を2段にする（上＝日本語、下＝英語を少し小さく）。タブなど横幅の狭い所で使う。
+// 「日本語 / English」を1行に並べると、スマホ幅でタブが画面からはみ出して画面全体が横に広がり、文字が重なって見えていたため
+function LB(ja,en,isBi){return isBi?[ja,e("br",{key:"br"}),e("span",{key:"en",style:{fontSize:"0.85em",fontWeight:500}},en)]:ja;}
 function loadLS(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb}catch{return fb}}
 function saveLS(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}
 // 勤怠データの端末保存（2026年9月・重さ対策）：記録が増えて端末の保存領域（およそ5MB）に入り切らないときは、
@@ -672,6 +684,86 @@ function calcRecord(rec){
     normalPayRaw:fin(normalPayRaw),otOnlyPayRaw:fin(otOnlyPayRaw),lnOnlyPayRaw:fin(lnOnlyPayRaw),lnOtPayRaw:fin(lnOtPayRaw)};
 }
 function mHHMM(m){return `${Math.floor(m/60)}時間${String(m%60).padStart(2,"0")}分`}
+// ===== 店舗ごとの内訳（2026年10月・追加修正㉔） =====
+// 承認済みの日だけを対象に、店舗ごとの労働日数・実労働時間を数える（月次一覧・印刷帳票の合計欄で、合算の右に並べる）。
+//   ・同じ日に2店舗以上で働いた日（店舗内訳 segs がある日）は、店舗ごとに1日ずつ数え、時間は店舗ごとの分（各店舗の出勤〜退勤から、
+//     その店舗の休憩・モノレールの移動時間を引いたもの）。店舗の間の空き時間はどの店舗にも入らない（合算の実労働時間と同じ）
+//   ・そのため内訳の日数を足すと、合算の労働日数より多くなることがある（同じ日を2店舗で1日ずつ数えるため）
+//   ・旧方式（備考に別店舗を書いていた頃）の日は、日の「店舗」にまとめて数える（時間を店舗ごとに分けられないため）
+//   戻り値：[{store, days, work}]（店舗の並びは ALL_STORES の順）。1店舗だけの月は呼び出し側で表示しない
+function storeBreakdown(days){
+  const map={};
+  (days||[]).forEach(r=>{
+    if(effStatus(r)!=="approved")return;
+    const parts=isMultiSeg(r)
+      ?r.segs.map(sg=>({store:sg.store,work:calcRecord({store:sg.store,clockIn:sg.clockIn,clockOut:sg.clockOut,breaks:sg.breaks,travelTimes:sg.travelTimes,hourlyWage:0}).workMinutes}))
+      :[{store:r.store||"",work:r.workMinutes!=null?r.workMinutes:calcRecord({...r,hourlyWage:0}).workMinutes}];
+    const seen={};
+    parts.forEach(p=>{
+      const k=p.store||"（店舗なし）";
+      if(!map[k])map[k]={store:k,days:0,work:0};
+      if(!seen[k]){map[k].days++;seen[k]=true;}
+      map[k].work+=p.work||0;
+    });
+  });
+  return Object.values(map).sort((a,b)=>storeOrder(a.store)-storeOrder(b.store));
+}
+// 合計欄の右に置く「店舗ごとの内訳」の小さな表（2026年10月・追加修正㉕で、合算の右に括弧で並べる形から表に変更）。
+// 2店舗以上のときだけ出す。print＝印刷帳票用（白黒・小さい文字）
+function StoreBreakdownBox({list,print}){
+  if(!list||list.length<2)return null;
+  const bd=print?"1px solid #777":"1px solid #cbd5e1";
+  // 文字の大きさも直接指定する（画面の月次一覧の表の設定 .table td が入れ子の表にも効いて、文字が大きくなっていたため。追加修正㉗）
+  const fs=print?"1em":11.5;
+  const th={border:bd,padding:print?"1px 6px":"4px 10px",background:print?"#d8d8d8":"#e2e8f0",fontWeight:700,whiteSpace:"nowrap",textAlign:"center",fontSize:fs,color:print?"#000":"#475569"};
+  const td={border:bd,padding:print?"1px 6px":"4px 10px",whiteSpace:"nowrap",background:print?"#fff":"white",fontWeight:print?400:600,fontSize:fs,color:print?"#000":"#1e293b"};
+  return e("div",{className:"store-breakdown",style:{alignSelf:"flex-start"}},
+    e("div",{style:{fontWeight:700,marginBottom:print?1:3,fontSize:print?"1em":11.5,color:print?"#000":"#1e3a5f"}},"店舗ごとの内訳"),
+    e("table",{style:{borderCollapse:"collapse",fontSize:print?"1em":11.5}},
+      e("thead",null,e("tr",null,e("th",{style:th},"店舗"),e("th",{style:th},T_LABEL.days),e("th",{style:th},T_LABEL.work))),
+      e("tbody",null,...list.map(x=>e("tr",{key:x.store},
+        e("td",{style:td},STORE_ABBR[x.store]||x.store),
+        e("td",{style:{...td,textAlign:"right"}},x.days+"日"),
+        e("td",{style:{...td,textAlign:"right"}},mHHMM(x.work)))))
+    ),
+    e("div",{style:{fontSize:print?"0.9em":10,fontWeight:400,color:print?"#333":"#64748b",marginTop:print?1:3,whiteSpace:"normal",maxWidth:print?"none":260}},
+      "※同じ日に2店舗で働いた日は、それぞれの店舗で1日と数えます")
+  );
+}
+// ===== 交通費（2026年10月・追加修正㉕） =====
+// 従業員ごとに「支給する／しない」と「日額」を設定し、その月の労働日数（承認済み。2店舗で働いた日も1日）× 日額 を表示する。
+// 給与の合計とは別の行に出す（給与計算の4区分には混ぜない）。金額なので、見られるのは管理者・オーナーだけ（給与と同じ）
+const normCommuteDaily=v=>{const n=Number(v);return (v==null||String(v).trim()===""||!Number.isFinite(n)||n<0)?null:Math.round(n);};
+// 2026年10月・追加修正㉖：交通費の「何月分から」の記録（履歴）。従業員の commuteHist＝[{from:"2026-11", on:true, daily:600}, …]（from の古い順）。
+//   from が "" の行は「最初から（過去のすべての月）」。履歴の無い人（㉕の版で設定した人）は、今の設定を「最初から」とみなす（表示は今までどおり）。
+//   その月に有効なのは「from がその月以前の行のうち、いちばん新しい行」。前月以前の月は、あとから日額を変えても変わらない
+function commuteHistOf(emp){
+  if(emp&&Array.isArray(emp.commuteHist)&&emp.commuteHist.length){
+    return emp.commuteHist.map(h=>({from:String((h&&h.from)||""),on:!!(h&&h.on),daily:normCommuteDaily(h&&h.daily)||0}))
+      .sort((a,b)=>a.from<b.from?-1:a.from>b.from?1:0);
+  }
+  if(emp&&(emp.commute||emp.commuteDaily!=null))return [{from:"",on:!!emp.commute,daily:normCommuteDaily(emp.commuteDaily)||0}];
+  return [];
+}
+// 交通費の支給は2026年10月分から（豊様のご指示）。これより前の月は、設定にかかわらず交通費を出さない
+const COMMUTE_START="2026-10";
+function commuteAt(emp,month){
+  if(String(month||"")<COMMUTE_START)return {on:false,daily:0};
+  const hit=commuteHistOf(emp).filter(h=>h.from<=String(month||"")).pop();
+  return hit&&hit.on&&hit.daily>0?{on:true,daily:hit.daily}:{on:false,daily:0};
+}
+// まだ先の月から変わる予定（来月分からなど）。無ければ null
+function commuteNext(emp,month){return commuteHistOf(emp).find(h=>h.from>String(month||""))||null;}
+// 日額・支給の有無を「from の月から」変えた履歴を作る（from 以降の古い予定は置き換える）
+function commuteHistWith(emp,from,on,daily){
+  const keep=commuteHistOf(emp).filter(h=>h.from<from);
+  return [...keep,{from,on:!!on,daily:on?(normCommuteDaily(daily)||0):0}];
+}
+function commuteOf(emp,workDays,month){
+  const c=commuteAt(emp,month||monthKeyOf(new Date()));
+  return {on:c.on,daily:c.daily,days:workDays||0,pay:c.on?c.daily*(workDays||0):0};
+}
+function commuteText(c){return c.days+"日 × ¥"+c.daily.toLocaleString()+" ＝ ¥"+c.pay.toLocaleString();}
 
 // ===== 共通ヘルパー（同じ判定・整形が各所で必要なためまとめる） =====
 // モノレール勤務か（移動時間の対象になるか）。
@@ -876,11 +968,14 @@ function RejectModal({empName,date,onSubmit,onCancel}){
   );
 }
 
-// ===== オーナーによる勤怠の削除（2026年10月・追加修正㉒） =====
-// 承認管理の行の「🗑 削除」から開く。削除理由（必須）とオーナーのパスワードを確認してから削除する。
+// ===== オーナー・店長による勤怠の削除（2026年10月・追加修正㉒／㉓） =====
+// 承認管理の行の「🗑 削除」から開く。削除理由（必須）を選んでから削除する。
+// オーナー・店長とも本人のパスワードを確認する（追加修正㉔。㉓では店長はパスワードなしだった）。店長は担当店舗の分だけ（GAS側でも確認する）
 // 2店舗以上の日は押した店舗の分だけ消える（残った店舗の分はそのままの状態で、労働時間は残った分だけで計算し直す）
 const DELETE_REASONS=["本人と連絡が取れない","出勤していない","入力の間違い（日付など）","その他"];
 function OwnerDeleteModal({currentUser,empName,rec,idx,busy,onSubmit,onCancel}){
+  const isOwnerUser=currentUser.role==="superadmin";
+  const pwLabel=isOwnerUser?"オーナーのパスワード":"ご自身のパスワード";
   const [picked,setPicked]=useState("");
   const [free,setFree]=useState("");
   const [pw,setPw]=useState("");
@@ -894,19 +989,20 @@ function OwnerDeleteModal({currentUser,empName,rec,idx,busy,onSubmit,onCancel}){
     if(busy||checking)return;
     if(!picked){setErr("削除する理由を選んでください");return;}
     if(picked==="その他"&&!free.trim()){setErr("理由の内容を入力してください");return;}
-    if(!pw){setErr("オーナーのパスワードを入力してください");return;}
+    const reason=free.trim()?picked+"："+free.trim():picked;
+    if(!pw){setErr(pwLabel+"を入力してください");return;}
     setChecking(true);
     const ok=await verifyPassword(currentUser,pw);
     if(!ok){setChecking(false);setErr("パスワードが違います");return;}
     const hash=await sha256(pw);
     setChecking(false);
-    onSubmit(free.trim()?picked+"："+free.trim():picked,hash);
+    onSubmit(reason,hash);
   };
   const lbl=t=>e("div",{style:{fontSize:12,color:"#64748b",fontWeight:700,marginBottom:6}},t);
   return e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:1000,
     display:"flex",alignItems:"center",justifyContent:"center",padding:16,overflowY:"auto"}},
     e("div",{"data-testid":"owner-delete-modal",style:{background:"white",borderRadius:18,width:"100%",maxWidth:420,padding:22,margin:"auto"}},
-      e("div",{style:{fontSize:17,fontWeight:700,color:"#991b1b",textAlign:"center"}},"🗑 勤怠の削除（オーナー）"),
+      e("div",{style:{fontSize:17,fontWeight:700,color:"#991b1b",textAlign:"center"}},"🗑 勤怠の削除"+(isOwnerUser?"（オーナー）":"（店長）")),
       e("div",{style:{fontSize:12.5,color:"#94a3b8",margin:"4px 0 14px",textAlign:"center"}},empName+"　"+rec.date),
       e("div",{style:{background:"#f8fafc",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 12px",fontSize:13,marginBottom:12,lineHeight:1.8}},
         e("div",null,e("b",null,"削除する分："),segText(target)," ",
@@ -935,7 +1031,7 @@ function OwnerDeleteModal({currentUser,empName,rec,idx,busy,onSubmit,onCancel}){
         placeholder:picked==="その他"?"内容（必須）":"補足（任意）",
         style:{width:"100%",padding:"9px 12px",border:"1.5px solid #d1d5db",borderRadius:8,
           fontFamily:"inherit",fontSize:14,resize:"vertical",minHeight:56,outline:"none",marginBottom:12}}),
-      lbl("🔒 オーナーのパスワード"),
+      lbl("🔒 "+pwLabel),
       e("input",{type:"password",value:pw,
         onChange:ev=>{setPw(ev.target.value);setErr(null);},
         onKeyDown:ev=>{if(ev.key==="Enter")go();},
@@ -1098,6 +1194,12 @@ function HelpModal({isAdmin,isOwner,onClose}){
     p([bdg("承認済","app"),"になると、本人は修正できなくなります。"]),
     p("直す必要が出たときは、承認管理から「差戻し」を押してください。本人が修正できるようになります。"),
     box("info","差し戻したあと元に戻したい場合は、「差戻し取消」で承認待ちに戻せます。"),
+    qa("本人と連絡が取れない日の勤怠を消したい（店長・オーナー）",
+      ["承認管理でその人を選び、その日の行の「🗑 削除」を押して、削除する理由を選び、ご自身のパスワードを入れると削除されます。操作履歴に理由つきで残ります。",e("br",{key:"1"}),
+       "店長が消せるのは、",e("b",{key:"2"},"自分が承認・差戻しできる行（担当店舗の分）"),"だけです。ご自身の勤怠とオーナーの勤怠は消せません。",e("br",{key:"3"}),
+       "削除するときは、理由とご自身のパスワードを入れます。",e("br",{key:"3b"}),
+       "消せるのは",e("b",{key:"4"},"承認待ち・差戻し中の分だけ"),"です（承認済みの分・月締め済みの月は消せません）。同じ日に2つの店舗で働いた日は、押した店舗の分だけ消えます。",e("br",{key:"5"}),
+       e("b",{key:"6"},"元に戻せません。"),"本人には通知されないので、LINEなどで伝えてください。"]),
 
     h(3,"月締めをする"),
     p("その月の承認がすべて終わったら月締めをします。締めると従業員は修正できなくなります。"),
@@ -1137,12 +1239,17 @@ function HelpModal({isAdmin,isOwner,onClose}){
       qa("パスワードを忘れたと言われた","従業員設定から、その人の「パスワード初期化」を押すと初期パスワードに戻ります。"),
       qa("従業員が辞めた","従業員設定から削除できます。過去の勤怠記録は残ります。"),
       qa("本人と連絡が取れない日の勤怠を消したい",
-        ["承認管理でその人を選び、その日の行の「🗑 削除」を押します（オーナーのみ）。削除する理由とオーナーのパスワードを入れると削除されます。操作履歴に理由つきで残ります。",e("br",{key:"1"}),
+        ["承認管理でその人を選び、その日の行の「🗑 削除」を押します。削除する理由とオーナーのパスワードを入れると削除されます。操作履歴に理由つきで残ります（店長も、担当店舗の分はご自身のパスワードで削除できます）。",e("br",{key:"1"}),
          "消せるのは",e("b",{key:"2"},"承認待ち・差戻し中の分だけ"),"です（承認済みの分・月締め済みの月は消せません）。",e("br",{key:"3"}),
          "同じ日に2つの店舗で働いた日は、押した店舗の分だけ消えます。残った店舗の分はそのままの状態で（承認済みなら承認済みのまま）集計に入り、労働時間は残った分だけで計算し直されます。",e("br",{key:"4"}),
          "元に戻せません。本人には通知されないので、LINEなどで伝えてください。"]),
+      qa("交通費を支給したい",["従業員設定の「編集」で、その人の「交通費」の「支給する」にチェックを入れ、日額を入れて保存します（追加するときも同じ欄があります）。",e("br",{key:"1"}),
+         "月次一覧・印刷帳票の合計欄に「交通費　○日 × ¥○ ＝ ¥○」が、給与の合計とは別の行で出ます。日数はその月の承認済みの",e("b",{key:"2"},"労働日数"),"（同じ日に2店舗で働いた日も1日）です。",e("br",{key:"3"}),
+         "金額なので、見られるのは管理者・オーナーだけです。",e("br",{key:"4"}),
+         "日額や「支給する／しない」を変えて保存するときは、",e("b",{key:"5"},"何月分から新しい設定にするか"),"（当月／前月／来月）を選べます。選んだ月より前の月は変わりません。月締め済みの月も選べます。",e("br",{key:"6"}),
+         "交通費の支給は2026年10月分からです（それより前の月には出ません）。"]),
       qa("時給が変わった",["従業員設定の「編集」から変更します。保存するとき「何月分から」を選ぶと、",e("b",{key:"b"},"その月以降の記録（承認済みの日も含む）が新しい時給で計算し直されます"),"（初期値は当月）。",e("br",{key:"1"}),
-         "月締め済みの月と、それより前の月の金額は変わりません。月給制の方には関係ありません。"]),
+         "選んだ月より前の月の金額は変わりません。",e("b",{key:"2"},"選んだ月が月締め済みでも書き換わります"),"（給与を支払った後の月を選ぶと、支払った額と合わなくなるので注意）。月給制の方には関係ありません。"]),
       qa("管理者を増やしたい",
         ["従業員設定で役割を「管理者」に変更し、担当店舗を選びます。",e("br",{key:"1"}),e("br",{key:"2"}),
          "同じ店舗に管理者が2人いると",e("b",{key:"3"},"お互いの勤怠を承認し合えます"),"。"]),
@@ -1318,7 +1425,7 @@ function LoginScreen({employees,admins,onLogin,onAdminLogin}){
 function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
   const {days,totalPay,workDays,totalWork,
     totalNormalMinutes,totalNormalPay,totalOtOnlyMinutes,totalOtOnlyPay,
-    totalLnOnlyMinutes,totalLnOnlyPay,totalLnOtMinutes,totalLnOtPay}=summary;
+    totalLnOnlyMinutes,totalLnOnlyPay,totalLnOtMinutes,totalLnOtPay,byStore,commute}=summary;
   const isMonthly=summary.isMonthly;
   // 金額は管理者・オーナーのみ（一般スタッフは不可）
   const canSeePay=currentUser.role==="admin"||currentUser.role==="superadmin";
@@ -1330,6 +1437,8 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
   // 印刷帳票と列の並び・表示を統一（2026年9月）：日付／店舗（簡易表示）／出勤／退勤／休憩／[移動]／備考／
   // 所定労働時間／時間外労働／深夜労働／時間外深夜労働／状態（承認者名つき）。
   // 横スクロールなしで収まるよう、列幅を絞ってフォントも小さくしている。
+  // 2026年10月・追加修正㉔：時間の5列（「10時間30分」）が列幅に収まらず、隣の列の数字とくっついて（重なって）見えていたため、
+  // 5列の幅を広げ（重み6.5〜7→8）、表の最小幅を880→980pxにした（狭い画面では表だけ横にスクロールする）
   // 2026年9月・追加修正⑮：「日給(円)」列は廃止（金額は下の合計欄の4区分＋総合計だけに一本化。
   // 月合計を区分ごとに月で1回丸める方式にしたため、日ごとの金額を並べると足し算が合計と合わなくなるため）
   const cols=showTravel?[
@@ -1340,11 +1449,11 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
     {k:"brk",label:"休憩",w:10},
     {k:"trv",label:"移動",w:9},
     {k:"note",label:"備考",w:8.5},
-    {k:"work",label:T_COL.work,w:6.5,nowrap:true},
-    {k:"normal",label:T_COL.normal,w:6.5,nowrap:true},
-    {k:"otOnly",label:T_COL.otOnly,w:6.5,nowrap:true},
-    {k:"lnOnly",label:T_COL.lnOnly,w:6.5,nowrap:true},
-    {k:"lnOt",label:T_COL.lnOt,w:6.5,nowrap:true},
+    {k:"work",label:T_COL.work,w:8,nowrap:true},
+    {k:"normal",label:T_COL.normal,w:8,nowrap:true},
+    {k:"otOnly",label:T_COL.otOnly,w:8,nowrap:true},
+    {k:"lnOnly",label:T_COL.lnOnly,w:8,nowrap:true},
+    {k:"lnOt",label:T_COL.lnOt,w:8,nowrap:true},
     {k:"st",label:"状態",w:10}
   ]:[
     {k:"date",label:"日付",w:6,nowrap:true},
@@ -1353,11 +1462,11 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
     {k:"out",label:"退勤",w:6,nowrap:true},
     {k:"brk",label:"休憩",w:11},
     {k:"note",label:"備考",w:9.5},
-    {k:"work",label:T_COL.work,w:7,nowrap:true},
-    {k:"normal",label:T_COL.normal,w:7,nowrap:true},
-    {k:"otOnly",label:T_COL.otOnly,w:7,nowrap:true},
-    {k:"lnOnly",label:T_COL.lnOnly,w:7,nowrap:true},
-    {k:"lnOt",label:T_COL.lnOt,w:7,nowrap:true},
+    {k:"work",label:T_COL.work,w:8,nowrap:true},
+    {k:"normal",label:T_COL.normal,w:8,nowrap:true},
+    {k:"otOnly",label:T_COL.otOnly,w:8,nowrap:true},
+    {k:"lnOnly",label:T_COL.lnOnly,w:8,nowrap:true},
+    {k:"lnOt",label:T_COL.lnOt,w:8,nowrap:true},
     {k:"st",label:"状態",w:10.5}
   ];
   const totalW=cols.reduce((s,c)=>s+c.w,0);
@@ -1369,7 +1478,7 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
       e("div",{style:{fontSize:11,color:"#059669",marginTop:2}},"入力・修正はできません。変更が必要な場合は管理者にご連絡ください。")
     ),
     e("div",{style:{overflowX:"auto"}},
-      e("table",{className:"table",style:{fontSize:10.5,tableLayout:"fixed",minWidth:880}},
+      e("table",{className:"table",style:{fontSize:10.5,tableLayout:"fixed",minWidth:980}},
         e("colgroup",null,...cols.map(c=>e("col",{key:c.k,style:{width:(c.w/totalW*100).toFixed(2)+"%"}}))),
         e("thead",null,e("tr",null,...cols.map(c=>e("th",{key:c.k,style:{padding:"6px 5px",whiteSpace:"normal",wordBreak:"break-all"}},colHead(c.label))))),
         e("tbody",null,
@@ -1415,6 +1524,9 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
         e("tfoot",null,
           e("tr",{style:{background:"#f8fafc"}},
             e("td",{colSpan:cols.length,style:{padding:"10px 12px",fontSize:11.5,color:"#475569",fontWeight:600,lineHeight:1.7}},
+             // 2026年10月・追加修正㉕：左＝合計の行、右＝店舗ごとの内訳の表（2店舗以上の月だけ）
+             e("div",{style:{display:"flex",flexWrap:"wrap",gap:"8px 32px",alignItems:"flex-start"}},
+             e("div",{className:"sum-lines"},
               // 2026年9月（追加修正⑪）：見出し「承認済合計（○日）」をやめ、労働日数から始まる5行にそろえた（印刷帳票と同じ）
               e("div",{style:{fontWeight:700,color:"#94a3b8",fontSize:10.5,marginBottom:2}},APPROVED_NOTE),
               sumLine(T_LABEL.days,(workDays||0)+"日",{weight:700}),
@@ -1426,7 +1538,13 @@ function MonthlyTable({summary,currentUser,selectedMonth,isMgrClosed}){
               // 2026年9月・追加修正⑮：総合計＝上の4区分（それぞれ月合計で四捨五入）の足し算。必ず一致するので端数の注意書きは廃止
               showPay&&e("div",{style:{marginTop:4,fontSize:13,color:"#059669"}},
                 "合計　¥"+totalPay.toLocaleString()
-              )
+              ),
+              // 交通費（追加修正㉕）：給与の合計とは別の行。金額が見られる人（管理者・オーナー）だけ。月給制の人にも出す
+              canSeePay&&commute&&commute.on&&e("div",{className:"commute-line",style:{marginTop:4,fontSize:13,color:"#0369a1"}},
+                "交通費　"+commuteText(commute))
+             ),
+             e(StoreBreakdownBox,{list:byStore})
+             )
             )
           )
         )
@@ -1453,7 +1571,7 @@ const STORE_ABBR = {
 function PrintSummary({summary,selectedMonth,isAdmin}){
   const {emp,days,totalPay,workDays,totalWork,
     totalNormalMinutes,totalNormalPay,totalOtOnlyMinutes,totalOtOnlyPay,
-    totalLnOnlyMinutes,totalLnOnlyPay,totalLnOtMinutes,totalLnOtPay}=summary;
+    totalLnOnlyMinutes,totalLnOnlyPay,totalLnOtMinutes,totalLnOtPay,byStore,commute}=summary;
   if(!emp)return null;
 
   const [y,m]=selectedMonth.split("-").map(Number);
@@ -1571,6 +1689,8 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
           // 2026年9月（追加修正⑮）：右端の「日給(円)」列と合計セルを廃止し、総合計は5行の下に「合計　¥…」として同じ書式で出す。
           // 総合計＝4区分（それぞれ月合計で四捨五入）の足し算なので必ず一致し、端数の注意書きも廃止した
           e("td",{colSpan:cols.length,className:"c-wrap"},
+            // 2026年10月・追加修正㉕：左＝合計の行、右＝店舗ごとの内訳の表（2店舗以上の月だけ。画面の月次一覧と同じ）
+            e("div",{style:{display:"flex",gap:"0 28px",alignItems:"flex-start"}},
             e("div",null,
               e("div",{style:{fontWeight:400,color:"#555",fontSize:8}},APPROVED_NOTE),
               sumLine(T_LABEL.days,workDays+"日",{marginTop:2}),
@@ -1579,7 +1699,11 @@ function PrintSummary({summary,selectedMonth,isAdmin}){
               sumLine(T_LABEL.otOnly,mHHMM(totalOtOnlyMinutes||0)+(showPay?"　¥"+(totalOtOnlyPay||0).toLocaleString():"")),
               sumLine(T_LABEL.lnOnly,mHHMM(totalLnOnlyMinutes||0)+(showPay?"　¥"+(totalLnOnlyPay||0).toLocaleString():"")),
               sumLine(T_LABEL.lnOt,mHHMM(totalLnOtMinutes||0)+(showPay?"　¥"+(totalLnOtPay||0).toLocaleString():"")),
-              showPay?sumLine("合計","¥"+(totalPay||0).toLocaleString(),{marginTop:2,weight:700}):null
+              showPay?sumLine("合計","¥"+(totalPay||0).toLocaleString(),{marginTop:2,weight:700}):null,
+              // 交通費（追加修正㉕）：管理者・オーナーが印刷するときだけ。月給制の人にも出す
+              isAdmin&&commute&&commute.on?sumLine("交通費",commuteText(commute),{marginTop:2,weight:700}):null
+            ),
+            e(StoreBreakdownBox,{list:byStore,print:true})
             )
           )
         )
@@ -1727,12 +1851,16 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     if(!ok){showToast(failMsg("取り消せませんでした。通信環境を確認して、もう一度お試しください。"),"warning");return;}
     showToast("差戻しを取り消しました");
   };
-  // ===== オーナーによる削除（2026年10月・追加修正㉒） =====
+  // ===== オーナー・店長による削除（2026年10月・追加修正㉒／㉓） =====
   // 承認待ち・差戻し中の行だけ。2店舗以上の日は押した店舗の分だけ消す（GAS側 deleteSegByOwner でも同じルールで確認する）
+  // 追加修正㉓：店長も、自分が承認・差戻しできる行（canApproveSeg）だけ削除できる（追加修正㉔：店長も本人のパスワード必須）
   const [deleteTarget,setDeleteTarget]=useState(null);   // {empId,date,idx}
   const [deleting,setDeleting]=useState(false);
+  const canDeleteSeg=(emp,rec,seg)=>isOwner||(currentUser.role==="admin"&&canApproveSeg(emp,rec,seg));
   const askOwnerDelete=(empId,date,idx)=>{
-    if(!isOwner)return;
+    const emp=allStaffMap.get(empId);
+    const rec=records[empId]?.[date];
+    if(!rec||!canDeleteSeg(emp,rec,recSegs(rec)[idx||0]))return;
     if(empClosed(empId)){showToast("月締め済みです。月締めを解除してから削除してください。","warning");return;}
     setDeleteTarget({empId,date,idx:idx||0});
   };
@@ -1742,7 +1870,7 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
     if(!rec){setDeleteTarget(null);showToast("この記録はすでにありません","warning");return;}
     const label=segLabel(rec,idx);
     const multi=isMultiSeg(rec)&&rec.segs.length>1;
-    const log=makeLog(me,"削除（オーナー）",nameOfStaff(empId),date+label,reason);
+    const log=makeLog(me,isOwner?"削除（オーナー）":"削除（店長）",nameOfStaff(empId),date+label,reason);
     setDeleting(true);
     let r=null;
     try{ r=await gasPost("deleteSegByOwner",{empId,date,segIdx:idx,byId:currentUser.id,passHash,seen:rec,log}); }catch(err){ r=null; }
@@ -2044,10 +2172,10 @@ function ApprovalTab({currentUser,employees,admins,records,setRecords,saveRecord
           return segs.map((sg,idx)=>{
             const can=canApproveSeg(selEmp,r,sg);
             const segHasData=!!(sg.clockIn||sg.clockOut);
-            // オーナーだけ、承認待ち・差戻し中の行に「🗑 削除」を出す（追加修正㉒。データなしの空行には出さない）
-            const delBtn=isOwner&&!closed&&(sg.status==="submitted"||sg.status==="rejected")&&records[r.empId]?.[r.date]
+            // オーナーと、その行を承認できる店長に、承認待ち・差戻し中の行の「🗑 削除」を出す（追加修正㉒／㉓。データなしの空行には出さない）
+            const delBtn=!closed&&(sg.status==="submitted"||sg.status==="rejected")&&records[r.empId]?.[r.date]&&canDeleteSeg(selEmp,r,sg)
               ?e("button",{className:"btn btn-outline","data-testid":"owner-delete",style:{fontSize:11,padding:"3px 9px",color:"#991b1b",borderColor:"#fca5a5"},
-                  title:"この行を削除（オーナーのみ）",onClick:()=>askOwnerDelete(r.empId,r.date,idx)},"🗑 削除"):null;
+                  title:"この行を削除（店長・オーナー）",onClick:()=>askOwnerDelete(r.empId,r.date,idx)},"🗑 削除"):null;
             const ops=sg.status==="approved"
               ?e("div",{style:{display:"flex",gap:6}},
                 e("span",{style:{color:"#059669",fontSize:12}},"✓ 承認済"),
@@ -2397,8 +2525,9 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     .filter(r=>r.status==="rejected"&&r.date&&!isAdminClosed(currentUser.id,String(r.date).substring(0,7)))
     .map(r=>r.date).sort().reverse();
 
-  const tabs=[[("today"),L("📅 日次入力","📅 Daily Input",isBi)],[("monthly"),L("📊 月次一覧","📊 Monthly",isBi)]];
-  if(isAdmin)tabs.push([("approval"),L("✅ 承認管理","✅ Approval",isBi)]);
+  // 2026年10月・追加修正㉔：英語併記の人はタブ名を2段（日本語／英語）にする（LB）。1行だとスマホ幅で3つ目のタブが画面外にはみ出していた
+  const tabs=[[("today"),LB("📅 日次入力","Daily Input",isBi)],[("monthly"),LB("📊 月次一覧","Monthly",isBi)]];
+  if(isAdmin)tabs.push([("approval"),LB("✅ 承認管理","Approval",isBi)]);
 
   return e("div",null,
     showPinChange&&e(PasswordChangeModal,{currentUser,isForced:currentUser.passHash==null,
@@ -2413,14 +2542,17 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     }),
     showHelp&&e(HelpModal,{isAdmin,isOwner:currentUser.role==="superadmin",onClose:()=>setShowHelp(false)}),
     // ヘッダー
-    e("div",{className:"emp-header no-print",style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}},
-      e("div",{className:"emp-header-left",style:{display:"flex",alignItems:"center",gap:12}},
+    // 2026年10月・追加修正㉔：PC幅でも折り返せるようにする（英語併記の人は「マイ勤怠 / My Attendance」＋氏名が長く、右のボタンと文字が重なっていた）
+    e("div",{className:"emp-header no-print",style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexWrap:"wrap",gap:8}},
+      e("div",{className:"emp-header-left",style:{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",minWidth:0}},
         e("button",{onClick:onBack,className:"no-print",style:{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",border:"1.5px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:13,fontWeight:600,color:"#64748b",fontFamily:"inherit"}},"← "+L("ログアウト","Logout",isBi)),
-        e("h2",{style:{fontSize:20,fontWeight:700,color:"#1e3a5f"}},L("マイ勤怠","My Attendance",isBi)),
-        e("div",{style:{fontWeight:700,fontSize:20,color:"#1e3a5f"}},currentUser.name)
+        e("h2",{style:{fontSize:20,fontWeight:700,color:"#1e3a5f",whiteSpace:"nowrap"}},L("マイ勤怠","My Attendance",isBi)),
+        e("div",{style:{fontWeight:700,fontSize:20,color:"#1e3a5f",overflowWrap:"anywhere"}},currentUser.name)
       ),
+      e("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
       e("button",{className:"no-print",onClick:()=>setShowHelp(true),style:{padding:"7px 14px",border:"1.5px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:13,fontWeight:600,color:"#64748b",fontFamily:"inherit"}},"❓ "+L("使い方","Help",isBi)),
       e("button",{className:"no-print",onClick:()=>setShowPinChange(true),style:{padding:"7px 14px",border:"1.5px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:13,fontWeight:600,color:"#64748b",fontFamily:"inherit"}},"🔐 "+L("パスワード変更","Change Password",isBi))
+      )
     ),
     // 月選択・給与（金額は管理者・オーナーのみ表示）
     e("div",{style:{display:"flex",alignItems:"center",gap:16,marginBottom:16},className:"no-print"},
@@ -2454,7 +2586,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     // タブ
     e("div",{className:"card no-print"},
       e("div",{style:{display:"flex",borderBottom:"2px solid #f1f5f9",marginBottom:20,gap:4}},
-        ...tabs.map(([k,l])=>e("button",{key:k,className:`tab ${activeTab===k?"active":""}`,onClick:()=>setActiveTab(k)},l))
+        ...tabs.map(([k,l])=>e("button",{key:k,className:`tab emp-tab ${activeTab===k?"active":""}`,onClick:()=>setActiveTab(k)},l))
       ),
       // 日次入力タブ
       activeTab==="today"&&e("div",null,
@@ -2633,7 +2765,7 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
 // ===== ADD EMPLOYEE FORM =====
 function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,showToast}){
   const [show,setShow]=useState(false);
-  const [form,setForm]=useState({empNo:"",name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false});
+  const [form,setForm]=useState({empNo:"",name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false,commute:false,commuteDaily:""});
   if(!show)return e("button",{className:"btn btn-primary",style:{fontSize:12,padding:"6px 16px",marginBottom:8},onClick:()=>setShow(true)},"＋ 従業員を追加");
   const save=()=>{
     if(!form.name.trim()){showToast("氏名を入力してください","warning");return;}
@@ -2645,6 +2777,9 @@ function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,s
     if(String(form.empNo||"").trim()!==""&&normEmpNo(form.empNo)==null){showToast("社員番号は数字で入力してください","warning");return;}
     const empNo=normEmpNo(form.empNo);
     if(empNo!=null&&[...employees,...admins].some(x=>normEmpNo(x.empNo)===empNo)){showToast("この社員番号は既に使われています","warning");return;}
+    // 交通費（追加修正㉕）：支給するなら日額（1円以上の数字）が必要
+    const cDaily=normCommuteDaily(form.commuteDaily);
+    if(form.commute&&!(cDaily>0)){showToast("交通費の日額を入力してください","warning");return;}
     const allIds=[...employees,...admins].map(x=>x.id);
     const newId=Math.max(...allIds,200)+1;
     const newEmp={...form,loginId:lid,id:newId,passHash:null,empNo:empNo==null?undefined:empNo,
@@ -2653,13 +2788,16 @@ function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,s
       hourlyWage:form.payType==="monthly"?undefined:(Number(form.hourlyWage)||0),
       monthlyWage:form.payType==="monthly"?(Number(form.monthlyWage)||0):undefined,
       managedStores:form.role==="superadmin"?ALL_STORES.filter(s=>!INACTIVE_STORES.includes(s)):form.role!=="employee"?[form.store]:undefined,
-      bilingual:form.bilingual||false
+      bilingual:form.bilingual||false,
+      commute:!!form.commute,commuteDaily:form.commute?cDaily:undefined,
+      // 新しく追加する人は「最初から」の1行（追加修正㉖）
+      commuteHist:form.commute?[{from:"",on:true,daily:cDaily}]:undefined
     };
     if(form.role==="employee")setEmployees(prev=>[...prev,newEmp]);
     else setAdmins(prev=>[...prev,newEmp]);
     queueStaffOp({action:"upsert",type:form.role==="employee"?"employees":"admins",staff:newEmp});
     showToast(form.name+" を追加しました（初期パスワード: "+INITIAL_PASSWORD+"）");
-    setShow(false);setForm({empNo:"",name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false});
+    setShow(false);setForm({empNo:"",name:"",loginId:"",department:"飲食部門",store:"GOLF BAR KING",role:"employee",payType:"hourly",hourlyWage:1000,monthlyWage:250000,bilingual:false,commute:false,commuteDaily:""});
   };
   return e("div",{style:{background:"#f8faff",borderRadius:12,padding:16,marginBottom:16,display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}},
     e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"社員番号"),e("input",{type:"number",value:form.empNo,onChange:ev=>setForm(f=>({...f,empNo:ev.target.value})),className:"input-field",style:{padding:"6px 10px",width:90},min:0,placeholder:"任意"})),
@@ -2676,6 +2814,13 @@ function AddEmployeeForm({employees,setEmployees,admins,setAdmins,queueStaffOp,s
       e("input",{type:"checkbox",id:"bilingualCheck",checked:form.bilingual||false,onChange:ev=>setForm(f=>({...f,bilingual:ev.target.checked}))}),
       e("label",{htmlFor:"bilingualCheck",style:{fontSize:12,color:"#1e3a5f",fontWeight:600,cursor:"pointer"}},"英語")
     ),
+    // 交通費（追加修正㉕）：支給する人だけ日額を入れる
+    e("div",{style:{display:"flex",alignItems:"center",gap:6,paddingBottom:2}},
+      e("input",{type:"checkbox",id:"commuteCheck",checked:form.commute||false,onChange:ev=>setForm(f=>({...f,commute:ev.target.checked}))}),
+      e("label",{htmlFor:"commuteCheck",style:{fontSize:12,color:"#1e3a5f",fontWeight:600,cursor:"pointer"}},"交通費")
+    ),
+    form.commute&&e("div",null,e("label",{style:{fontSize:11,color:"#64748b",fontWeight:700,display:"block",marginBottom:3}},"交通費の日額"),
+      e("input",{type:"number","data-testid":"add-commute-daily",value:form.commuteDaily,onChange:ev=>setForm(f=>({...f,commuteDaily:ev.target.value})),className:"input-field",style:{padding:"6px 10px",width:90},min:0,placeholder:"例）500"})),
     e("div",{style:{display:"flex",gap:6}},
       e("button",{className:"btn btn-success",style:{fontSize:12,padding:"6px 14px"},onClick:save},"追加"),
       e("button",{className:"btn btn-outline",style:{fontSize:12,padding:"6px 14px"},onClick:()=>setShow(false)},"キャンセル")
@@ -2690,20 +2835,31 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
   // 時給を変えたとき、何月分の記録から新しい時給で計算し直すか（2026年9月・追加修正⑬）
   //   thisMonth＝当月分から（初期値）／prevMonth＝前月分から／none＝過去の記録は書き換えない
   const [wageFrom,setWageFrom]=useState("thisMonth");
-  const thisMonth=monthKeyOf(new Date()),prevMonth=addMonths(thisMonth,-1);
+  const thisMonth=monthKeyOf(new Date()),prevMonth=addMonths(thisMonth,-1),nextMonth=addMonths(thisMonth,1);
+  // 交通費を変えたとき、何月分から新しい設定にするか（2026年10月・追加修正㉖）。thisMonth（初期値）／prevMonth／nextMonth
+  const [commuteFrom,setCommuteFrom]=useState("thisMonth");
+  // 2026年10月・追加修正㉗：交通費の欄を触ったら（値が今月と同じでも）「何月分から」を選べるようにする。
+  // 以前は今月と違う値のときだけだったため、「来月からの予定を取り消す（今月と同じ値に戻す）」「今月と同じ値で前月分を直す」ができなかった
+  const [commuteTouched,setCommuteTouched]=useState(false);
+  const curC=commuteAt(emp,thisMonth),nextC=commuteNext(emp,thisMonth);
+  const fDaily=normCommuteDaily(form.commuteDaily);
+  const commuteChanged=commuteTouched||!!form.commute!==curC.on||(!!form.commute&&fDaily!==curC.daily);
   const monthJa=m=>{const [y,mo]=m.split("-");return `${y}年${Number(mo)}月`;};
   const wageChanged=(form.payType||"hourly")!=="hourly"?false:(emp.payType!=="monthly"&&emp.hourlyWage!=null&&Number(form.hourlyWage)!==Number(emp.hourlyWage));
   const roleLabel={employee:"一般",admin:"管理者",superadmin:"オーナー"};
   const roleBg={employee:"#e8f0fe",admin:"#1e3a5f",superadmin:"#7c3aed"};
   const roleColor={employee:"#1e3a5f",admin:"white",superadmin:"white"};
   const passStatus=hash=>hash==null
-    ?e("span",{style:{fontSize:11,color:"#dc2626",fontWeight:700}},"初期パスワード")
-    :e("span",{style:{fontSize:11,color:"#059669",fontWeight:700}},"設定済み");
+    ?e("span",{style:{fontSize:11,color:"#dc2626",fontWeight:700,whiteSpace:"nowrap"}},"初期パスワード")
+    :e("span",{style:{fontSize:11,color:"#059669",fontWeight:700,whiteSpace:"nowrap"}},"設定済み");
+  // 2026年10月・追加修正㉗：短い項目は折り返さない（以前は列が細くつぶれて「設定済み」などが縦書きのようになり、
+  // 交通費の列を足したことで右端の「操作」列がPC幅でも画面外に押し出されていた）。長い項目（氏名・ログインID・担当店舗）だけ折り返す
+  const NW={whiteSpace:"nowrap"};
 
   if(ed)return e("tr",null,
     e("td",null,e("input",{type:"number",value:form.empNo==null?"":form.empNo,onChange:ev=>setForm(f=>({...f,empNo:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:70},min:0,placeholder:"任意"})),
     e("td",null,e("input",{value:form.name,onChange:ev=>setForm(f=>({...f,name:ev.target.value})),onCompositionEnd:ev=>setForm(f=>({...f,name:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:100}})),
-    e("td",null,e("input",{value:form.loginId||"",onChange:ev=>setForm(f=>({...f,loginId:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:160},placeholder:"example@tribe.jp"})),
+    e("td",null,e("input",{value:form.loginId||"",onChange:ev=>setForm(f=>({...f,loginId:ev.target.value})),className:"input-field",style:{padding:"5px 8px",width:130},placeholder:"example@tribe.jp"})),
     e("td",null,e("select",{value:form.department,onChange:ev=>{const d=ev.target.value;setForm(f=>({...f,department:d,store:DEPARTMENT_STORES[d]?.[0]||""}))},className:"input-field",style:{padding:"5px 8px"}},
       Object.keys(DEPARTMENT_STORES).map(d=>e("option",{key:d,value:d},d))
     )),
@@ -2725,6 +2881,23 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
         e("option",{value:"none"},"過去の記録は書き換えない")
       )
     ),
+    // 交通費（追加修正㉕）：支給する／しない＋日額
+    e("td",null,
+      e("label",{style:{display:"flex",alignItems:"center",gap:4,fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}},
+        e("input",{type:"checkbox","data-testid":"edit-commute",checked:!!form.commute,onChange:ev=>{setCommuteTouched(true);setForm(f=>({...f,commute:ev.target.checked}));}}),"支給する"),
+      form.commute&&e("input",{type:"number","data-testid":"edit-commute-daily",value:form.commuteDaily==null?"":form.commuteDaily,onChange:ev=>{setCommuteTouched(true);setForm(f=>({...f,commuteDaily:ev.target.value}));},className:"input-field",style:{padding:"5px 8px",width:84,marginTop:4},min:0,placeholder:"日額"}),
+      // 交通費を変えたときだけ、「何月分から新しい設定にするか」を選べる（追加修正㉖。月締め済みの月も選べる）
+      commuteChanged&&e("select",{"data-testid":"edit-commute-from",value:commuteFrom,onChange:ev=>setCommuteFrom(ev.target.value),className:"input-field",style:{padding:"4px 6px",width:124,marginTop:4,fontSize:11},title:"新しい交通費にする月"},
+        e("option",{value:"thisMonth"},monthJa(thisMonth)+"分から"),
+        // 前月が交通費の支給開始（2026年10月）より前なら出さない
+        prevMonth>=COMMUTE_START&&e("option",{value:"prevMonth"},monthJa(prevMonth)+"分から"),
+        e("option",{value:"nextMonth"},monthJa(nextMonth)+"分から")
+      ),
+      nextC&&e("div",{style:{fontSize:10,color:"#0369a1",marginTop:3,maxWidth:124}},monthJa(nextC.from)+"から"+(nextC.on?"¥"+nextC.daily.toLocaleString()+"/日":"支給なし")+"の予定"),
+      // 先の予定を取り消す（今月の設定に戻して「当月分から」で保存する＝先の予定が消える）
+      nextC&&e("button",{type:"button","data-testid":"edit-commute-cancel-plan",onClick:()=>{setCommuteTouched(true);setCommuteFrom("thisMonth");setForm(f=>({...f,commute:curC.on,commuteDaily:curC.on?curC.daily:""}));},
+        style:{marginTop:3,fontSize:10,padding:"2px 6px",border:"1px solid #93c5fd",borderRadius:6,background:"white",color:"#0369a1",cursor:"pointer",fontFamily:"inherit"}},"予定を取り消す")
+    ),
     // 担当店舗（管理者・オーナーのみ複数選択）
     e("td",null,
       (form.role==="admin"||form.role==="superadmin")
@@ -2735,33 +2908,39 @@ function EmployeeRow({emp,onSave,onPassReset,onDelete,isSuperAdmin}){
         )
         :e("span",{style:{fontSize:11,color:"#94a3b8"}},"—")
     ),
-    e("td",null,passStatus(form.passHash)),
+    e("td",{style:NW},passStatus(form.passHash)),
     e("td",null,
       e("input",{type:"checkbox",checked:form.bilingual||false,onChange:ev=>setForm(f=>({...f,bilingual:ev.target.checked}))})
     ),
-    e("td",null,e("div",{style:{display:"flex",gap:6}},
-      e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{onSave(form,{wageFrom:wageChanged?(wageFrom==="prevMonth"?prevMonth:wageFrom==="none"?null:thisMonth):null});setEd(false);}},"保存"),
+    e("td",{className:"sticky-op"},e("div",{style:{display:"flex",gap:6,whiteSpace:"nowrap"}},
+      e("button",{className:"btn btn-success",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{onSave(form,{wageFrom:wageChanged?(wageFrom==="prevMonth"?prevMonth:wageFrom==="none"?null:thisMonth):null,
+        commuteFrom:commuteChanged?(commuteFrom==="prevMonth"?prevMonth:commuteFrom==="nextMonth"?nextMonth:thisMonth):null});setEd(false);}},"保存"),
       e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 10px"},onClick:()=>setEd(false)},"キャンセル")
     ))
   );
 
   return e("tr",null,
-    e("td",{style:{fontSize:12,color:"#475569",fontWeight:600}},normEmpNo(emp.empNo)==null?"—":String(normEmpNo(emp.empNo))),
-    e("td",{style:{fontWeight:600}},emp.name),
-    e("td",{style:{fontSize:11,color:"#64748b"}},emp.loginId||"—"),
-    e("td",{style:{fontSize:12,color:"#64748b"}},emp.department),
-    e("td",{style:{fontSize:12,color:"#64748b"}},emp.store),
-    e("td",null,e("span",{style:{fontSize:11,background:roleBg[emp.role]||"#e8f0fe",color:roleColor[emp.role]||"#1e3a5f",padding:"2px 8px",borderRadius:20,fontWeight:700}},roleLabel[emp.role]||emp.role)),
-    e("td",{style:{fontWeight:700,color:"#1e3a5f"}},emp.payType==="monthly"?"月 ¥"+(emp.monthlyWage||0).toLocaleString():"¥"+(emp.hourlyWage||0).toLocaleString()),
-    e("td",{style:{fontSize:12,color:"#64748b"}},(emp.role==="employee")?"—":(emp.managedStores||[emp.store]).join("・")),
-    e("td",null,passStatus(emp.passHash)),
+    e("td",{style:{fontSize:12,color:"#475569",fontWeight:600,...NW}},normEmpNo(emp.empNo)==null?"—":String(normEmpNo(emp.empNo))),
+    e("td",{style:{fontWeight:600,minWidth:72}},emp.name),
+    e("td",{style:{fontSize:11,color:"#64748b",wordBreak:"break-all",minWidth:90}},emp.loginId||"—"),
+    e("td",{style:{fontSize:12,color:"#64748b",...NW}},emp.department),
+    e("td",{style:{fontSize:12,color:"#64748b",minWidth:60}},emp.store),
+    e("td",{style:NW},e("span",{style:{fontSize:11,background:roleBg[emp.role]||"#e8f0fe",color:roleColor[emp.role]||"#1e3a5f",padding:"2px 8px",borderRadius:20,fontWeight:700}},roleLabel[emp.role]||emp.role)),
+    e("td",{style:{fontWeight:700,color:"#1e3a5f",...NW}},emp.payType==="monthly"?"月 ¥"+(emp.monthlyWage||0).toLocaleString():"¥"+(emp.hourlyWage||0).toLocaleString()),
+    e("td",{className:"commute-cell",style:{fontSize:12,color:curC.on?"#0369a1":"#94a3b8",fontWeight:curC.on?700:400,minWidth:70}},
+      e("span",{style:{whiteSpace:"nowrap"}},curC.on?"¥"+curC.daily.toLocaleString()+"/日":"—"),
+      // 先の月から変わる予定があれば小さく出す（追加修正㉖）
+      nextC&&e("div",{style:{fontSize:10,fontWeight:600,color:"#0369a1"}},monthJa(nextC.from)+"から"+(nextC.on?"¥"+nextC.daily.toLocaleString():"なし"))),
+    e("td",{style:{fontSize:12,color:"#64748b",minWidth:90}},(emp.role==="employee")?"—":(emp.managedStores||[emp.store]).join("・")),
+    e("td",{style:NW},passStatus(emp.passHash)),
     e("td",{style:{textAlign:"center"}},
       emp.bilingual?e("span",{style:{fontSize:12,color:"#059669",fontWeight:700}},"✓"):e("span",{style:{fontSize:12,color:"#94a3b8"}},"—")
     ),
-    e("td",null,e("div",{style:{display:"flex",gap:6}},
-      e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{setForm({...emp});setEd(true);}},"編集"),
-      e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px"},onClick:()=>{if(confirm(emp.name+"のパスワードを初期パスワードにリセットしますか？"))onPassReset(emp);}},"パスワード初期化"),
-      e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px",background:"#7c3aed",borderColor:"#7c3aed"},onClick:()=>{if(confirm(emp.name+"を削除しますか？"))onDelete(emp);}},"削除")
+    // 操作のボタンは1つずつは折り返さず、列が狭いときはボタンごと2段に並べる
+    e("td",{className:"sticky-op"},e("div",{style:{display:"flex",gap:6,flexWrap:"wrap",minWidth:112}},
+      e("button",{className:"btn btn-outline",style:{fontSize:11,padding:"4px 10px",whiteSpace:"nowrap"},onClick:()=>{setForm({...emp,commute:curC.on,commuteDaily:curC.on?curC.daily:""});setCommuteFrom("thisMonth");setCommuteTouched(false);setEd(true);}},"編集"),
+      e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px",whiteSpace:"nowrap"},onClick:()=>{if(confirm(emp.name+"のパスワードを初期パスワードにリセットしますか？"))onPassReset(emp);}},"パスワード初期化"),
+      e("button",{className:"btn btn-danger",style:{fontSize:11,padding:"4px 10px",whiteSpace:"nowrap",background:"#7c3aed",borderColor:"#7c3aed"},onClick:()=>{if(confirm(emp.name+"を削除しますか？"))onDelete(emp);}},"削除")
     ))
   );
 }
@@ -2833,7 +3012,9 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
                   e("div",{style:{fontSize:10,color:"#94a3b8"}},emp.store)
                 ),
                 // 2026年9月・追加修正⑯：カードは氏名・店舗・金額だけにする（以前あった「労働日数 ○日　労働時間 ○時間○分」の行は削除）
-                e("div",{style:{fontSize:18,fontWeight:700,color:"#059669"}},"¥"+s.totalPay.toLocaleString())
+                e("div",{style:{fontSize:18,fontWeight:700,color:"#059669"}},"¥"+s.totalPay.toLocaleString()),
+                // 交通費（追加修正㉕）：支給する人だけ、給与の下に小さく
+                s.commute&&s.commute.on&&e("div",{className:"commute-card",style:{fontSize:11,fontWeight:700,color:"#0369a1",marginTop:2}},"＋交通費 ¥"+s.commute.pay.toLocaleString())
               );
             })
           )
@@ -2857,12 +3038,12 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
       // 新規追加フォーム
       e(AddEmployeeForm,{employees,setEmployees,admins,setAdmins,queueStaffOp,showToast}),
       e("div",{style:{overflowX:"auto",marginTop:16}},e("table",{className:"table",style:{fontSize:12}},
-        e("thead",null,e("tr",null,["社員番号","氏名","ログインID","部署","店舗","役割","給与","担当店舗","パスワード","英語","操作"].map(h=>e("th",{key:h},h)))),
+        e("thead",null,e("tr",null,["社員番号","氏名","ログインID","部署","店舗","役割","給与","交通費","担当店舗","パスワード","英語","操作"].map(h=>e("th",{key:h,className:h==="操作"?"sticky-op":undefined,style:{whiteSpace:"nowrap",...(h==="操作"?{background:"#f8fafc"}:{})}},h)))),
         e("tbody",null,...sortByStore([...employees,...admins]).flatMap((emp,i,arr)=>[
           // 店舗が変わるところで見出しを挟む
           (i===0||arr[i-1].store!==emp.store)
             ? e("tr",{key:"h-"+emp.store},
-                e("td",{colSpan:11,style:{background:"#f1f5f9",fontWeight:700,fontSize:12,color:"#1e3a5f",padding:"6px 10px"}},
+                e("td",{colSpan:12,style:{background:"#f1f5f9",fontWeight:700,fontSize:12,color:"#1e3a5f",padding:"6px 10px"}},
                   emp.store+"（"+arr.filter(x=>x.store===emp.store).length+"名）"))
             : null,
           e(EmployeeRow,{key:emp.id,emp,isSuperAdmin,
@@ -2875,6 +3056,17 @@ function AdminDashboard({employees,setEmployees,admins,setAdmins,queueStaffOp,se
             if(String(upd.empNo==null?"":upd.empNo).trim()!==""&&normEmpNo(upd.empNo)==null){showToast("社員番号は数字で入力してください","warning");return;}
             const empNo=normEmpNo(upd.empNo);
             if(empNo!=null&&[...employees,...admins].some(x=>x.id!==upd.id&&normEmpNo(x.empNo)===empNo)){showToast("この社員番号は既に使われています","warning");return;}
+            // 交通費（追加修正㉕）：支給するなら日額（1円以上の数字）が必要。支給しないなら日額は残さない
+            const cDaily=normCommuteDaily(upd.commuteDaily);
+            if(upd.commute&&!(cDaily>0)){showToast("交通費の日額を入力してください","warning");return;}
+            // 追加修正㉖：交通費を変えたときは、選んだ月（opt.commuteFrom）から新しい設定にする履歴を作る。
+            //   変えていないときは履歴をそのまま残す。15・16列目（支給・日額）には、今月に有効な設定を入れる
+            {
+              const before=[...employees,...admins].find(x=>x.id===upd.id)||upd;
+              const hist=(opt&&opt.commuteFrom)?commuteHistWith(before,opt.commuteFrom,!!upd.commute,cDaily):commuteHistOf(before);
+              const cur=commuteAt({commuteHist:hist},monthKeyOf(new Date()));
+              upd={...upd,commuteHist:hist.length?hist:undefined,commute:cur.on,commuteDaily:cur.on?cur.daily:undefined};
+            }
             upd={...upd,loginId:lid,empNo:empNo==null?undefined:empNo,
               // 給与形態に合わない項目は残さない
               payType:upd.payType==="monthly"?"monthly":undefined,
@@ -3324,7 +3516,7 @@ function App(){
   };
   // 時給変更を指定月以降の記録に反映する（2026年9月・追加修正⑬）。従業員設定で時給を変えて保存したときに呼ばれる。
   // GAS側（applyWage）がスプレッドシートの「時給」「日給」列を計算し直し、端末側の記録もそれに合わせる。
-  // 月締め済みの月はGAS側で書き換えない（返事の skippedClosed に月が入る）。履歴は同じ通信で「時給変更」として残す。
+  // 2026年10月・追加修正㉖：月締め済みの月も書き換える（返事の updatedClosed に月が入る。以前は書き換えなかった）。履歴は同じ通信で「時給変更」として残す。
   const applyWage=async(emp,fromMonth,oldWage)=>{
     const newWage=Number(emp.hourlyWage)||0;
     const monthJa=m=>{const [y,mo]=String(m).split("-");return `${y}年${Number(mo)}月`;};
@@ -3336,19 +3528,22 @@ function App(){
     if(!r||r.success===false){
       showToast(r&&r.refused?String(r.error||""):"時給は保存しましたが、"+monthJa(fromMonth)+"分以降の記録の計算し直しができませんでした。通信環境を確認して、もう一度「編集」→「保存」してください。","warning");return false;
     }
-    // 端末側の記録もスプレッドシートと同じ時給にそろえる（月締め済みの月・時給の無い日はそのまま）
+    // 端末側の記録もスプレッドシートと同じ時給にそろえる（時給の無い日はそのまま。月締め済みの月も書き換える＝追加修正㉖）
     setRecords(prev=>{
       const mine=prev[emp.id];if(!mine)return prev;
       const nx={...mine};let changed=false;
       Object.keys(mine).forEach(d=>{
         const m=String(d).slice(0,7);const rr=mine[d];
-        if(m<fromMonth||!rr||rr.hourlyWage==null||isAdminClosed(emp.id,m)||Number(rr.hourlyWage)===newWage)return;
+        if(m<fromMonth||!rr||rr.hourlyWage==null||Number(rr.hourlyWage)===newWage)return;
         nx[d]={...rr,hourlyWage:newWage};changed=true;
       });
       return changed?{...prev,[emp.id]:nx}:prev;
     });
-    const skipped=r.skippedClosed||[];
-    const msg=`${emp.name} の${monthJa(fromMonth)}分以降 ${r.updated||0}日分を時給 ¥${newWage.toLocaleString()} で計算し直しました`+(skipped.length?`（月締め済みの${skipped.map(monthJa).join("・")}は変更なし）`:"");
+    const skipped=r.skippedClosed||[];   // 古いGAS（月締め済みの月を書き換えない版）のとき
+    const closedUpd=r.updatedClosed||[];
+    const msg=`${emp.name} の${monthJa(fromMonth)}分以降 ${r.updated||0}日分を時給 ¥${newWage.toLocaleString()} で計算し直しました`+
+      (closedUpd.length?`（月締め済みの${closedUpd.map(monthJa).join("・")}も変更しました）`:"")+
+      (skipped.length?`（月締め済みの${skipped.map(monthJa).join("・")}は変更なし。GASが古い版です）`:"");
     // スタッフ情報の保存の知らせ（3秒で消える）と重なって読めなくなるのを防ぐため、その保存が終わるのを待ってから、少し長め（7秒）に表示する
     for(let i=0;i<40&&staffSyncing.current;i++)await new Promise(res=>setTimeout(res,250));
     setToast({msg,type:"success"});setTimeout(()=>setToast(t=>t&&t.msg===msg?null:t),7000);
@@ -3448,7 +3643,9 @@ function App(){
       totalNormalMinutes:tNormalM,totalNormalPay:tNormalP,
       totalOtOnlyMinutes:tOtOnlyM,totalOtOnlyPay:tOtOnlyP,
       totalLnOnlyMinutes:tLnOnlyM,totalLnOnlyPay:tLnOnlyP,
-      totalLnOtMinutes:tLnOtM,totalLnOtPay:tLnOtP};
+      totalLnOtMinutes:tLnOtM,totalLnOtPay:tLnOtP,
+      byStore:storeBreakdown(dd),   // 店舗ごとの内訳（追加修正㉔）
+      commute:commuteOf(emp,wd,selectedMonth)};   // 交通費（追加修正㉕。㉖からその月に有効な日額で計算）
   };
 
   // 月次一覧・ダッシュボードで古い月を選んだら、その月を追加で読む
