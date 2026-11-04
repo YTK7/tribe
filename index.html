@@ -1161,6 +1161,10 @@ function HelpModal({isAdmin,isOwner,onClose}){
       [bdg("承認待ち","sub"),"のうちは直せます。直して「提出する」を押してください。",e("br",{key:"1"}),
        bdg("承認済","app"),"になったあとは直せないので、管理者に連絡してください。"]),
     qa("前の日の分を入れ忘れた","対象日を変えれば、過去の日も入力できます。"),
+    qa("毎回同じ時間を入れるのが面倒",
+      ["出勤・退勤の上にある「★ お気に入り」を使ってください。時間（休憩も）を入れてから「★ 今の入力を登録」を押し、名前（例：通し・夜）を付けると、次から押すだけで入ります（5件まで。「編集」で消せます）。",e("br",{key:"1"}),
+       "「↺ 前回と同じ時間」を押すと、前に入力した日の時間がそのまま入ります。",e("br",{key:"2"}),
+       e("b",{key:"3"},"どちらも入力欄に入るだけで、提出はされません。"),"休憩を取らなかった日などは直してから「提出する」を押してください。お気に入りはどの端末でも同じものが出ます。"]),
     qa("パスワードを忘れた","オーナーに連絡してください。初期パスワードに戻してもらえます。"),
     qa("「勤務時間外の休憩があります」と出る","休憩の時間が、出勤〜退勤の外にはみ出しています。時刻を確認してください。"),
     qa("日付を変えたら入力が消えた","提出前に日付を変えると入力は消えます。確認が出たら「キャンセル」を押してください。"),
@@ -2270,6 +2274,122 @@ function SubStoreEditor({idx,seg,status,rejectReason,disabled,canRemove,isBi,all
   );
 }
 
+// ===== お気に入り時間（2026年11月・追加修正㉘） =====
+// 日次入力で、よく使う出勤・退勤・休憩（モノレールの日は移動も）をワンタップで入れる。
+//   ・★ お気に入り：本人が「今の入力」に名前を付けて登録（最大5件）。押すと店舗①の入力欄に入る（提出はしない）
+//   ・↺ 前回と同じ：対象日より前で、出勤・退勤が入っている直近の日の時間を入れる（複数店舗の日は店舗①の分）
+//   保存先はスプレッドシート（スタッフ・管理者シートの18列目「お気に入り時間」）。GASの saveFavTimes が本人分だけを書き換える。
+//   確認の内容（件数・名前の文字数・時刻の形）は GAS側の normFavTimes と同じ。片方だけ直さないこと
+const FAV_MAX=5;          // 1人が登録できる件数
+const FAV_NAME_MAX=10;    // 名前の文字数
+const isHHMM=t=>/^([01]\d|2[0-3]):[0-5]\d$/.test(String(t||""));
+const favRanges=arr=>(arr||[]).filter(x=>x&&isHHMM(x.start)&&isHHMM(x.end)&&x.start!==x.end).slice(0,5).map(x=>({start:x.start,end:x.end}));
+function normFavTimes(list){
+  if(!Array.isArray(list)||!list.length)return [];
+  const out=[],seen={};
+  for(const f0 of list){
+    if(out.length>=FAV_MAX)break;
+    const f=f0||{};
+    const name=String(f.name||"").trim().slice(0,FAV_NAME_MAX);
+    if(!name||seen[name]||!isHHMM(f.clockIn)||!isHHMM(f.clockOut)||f.clockIn===f.clockOut)continue;
+    seen[name]=true;
+    out.push({name,clockIn:f.clockIn,clockOut:f.clockOut,breaks:favRanges(f.breaks),travelTimes:favRanges(f.travelTimes)});
+  }
+  return out;
+}
+// 「17:00〜翌01:00」のように、退勤が出勤より前なら「翌」を付ける
+function favRangeText(f){return f.clockIn+"〜"+(toMin(f.clockOut)<toMin(f.clockIn)?"翌":"")+f.clockOut;}
+function favBreakText(f,isBi){const v=favRanges(f.breaks);return v.length?L("休憩 ","Break ",isBi)+v.map(x=>x.start+"〜"+x.end).join("・"):L("休憩なし","No break",isBi);}
+// 対象日より前で、出勤・退勤が入っている直近の日（複数店舗の日は店舗①の分）。読み込み済みの範囲（当月＋前2か月）から探す
+function lastWorkBefore(empRecs,date){
+  const ds=Object.keys(empRecs||{}).filter(d=>d<date).sort().reverse();
+  for(const d of ds){
+    const r=empRecs[d];if(!r)continue;
+    const s0=isMultiSeg(r)?r.segs[0]:r;
+    if(s0&&s0.clockIn&&s0.clockOut&&s0.clockIn!==s0.clockOut)
+      return {date:d,store:s0.store||r.store||"",clockIn:s0.clockIn,clockOut:s0.clockOut,breaks:validRanges(s0.breaks),travelTimes:validRanges(s0.travelTimes)};
+  }
+  return null;
+}
+function FavTimesBar({currentUser,isBi,form,selectedStore,editDate,empRecs,onApply,saveFavTimes,showToast}){
+  const favs=normFavTimes(currentUser.favTimes);
+  const [editing,setEditing]=useState(false);
+  const [regOpen,setRegOpen]=useState(false);
+  const [name,setName]=useState("");
+  const [busy,setBusy]=useState(false);
+  // 全部消したら編集モードを終える（「★ 今の入力を登録」が出ないままにならないように）
+  useEffect(()=>{ if(!favs.length&&editing)setEditing(false); },[favs.length,editing]);
+  const last=lastWorkBefore(empRecs,editDate);
+  const isMono=selectedStore==="モノレール";
+  // モノレール以外の日は移動時間を入れない（移動はモノレールの日だけの項目のため）
+  const pick=f=>({clockIn:f.clockIn,clockOut:f.clockOut,breaks:favRanges(f.breaks),travelTimes:isMono?favRanges(f.travelTimes):[]});
+  const save=async(next,okMsg)=>{
+    if(busy)return false;
+    setBusy(true);
+    const r=await saveFavTimes(next);
+    setBusy(false);
+    if(r&&r.success!==false){showToast(okMsg);return true;}
+    const old=r&&/不明なaction/.test(String(r.error||""));
+    showToast(old?L("お気に入りを保存できませんでした（GASが古い版です。GASを先に更新してください）","Could not save (server is outdated)",isBi)
+      :(r&&r.refused&&r.error)?String(r.error)
+      :L("お気に入りを保存できませんでした。通信環境を確認して、もう一度お試しください。","Could not save favorites. Please try again.",isBi),"warning");
+    return false;
+  };
+  const openReg=()=>{
+    if(!form.clockIn||!form.clockOut){showToast(L("先に出勤・退勤を入れてから登録してください","Enter clock in/out first",isBi),"warning");return;}
+    if(form.clockIn===form.clockOut){showToast(L("出勤と退勤が同じ時刻のため登録できません","Clock in and out are the same",isBi),"warning");return;}
+    if(favs.length>=FAV_MAX){showToast(L("お気に入りは"+FAV_MAX+"件までです。「編集」で不要なものを消してください","Up to "+FAV_MAX+" favorites. Remove one first.",isBi),"warning");return;}
+    setName("");setEditing(false);setRegOpen(true);
+  };
+  const register=async()=>{
+    const n=name.trim();
+    if(!n){showToast(L("名前を入れてください（例：通し）","Enter a name",isBi),"warning");return;}
+    if(n.length>FAV_NAME_MAX){showToast(L("名前は"+FAV_NAME_MAX+"文字までです","Name is too long",isBi),"warning");return;}
+    if(favs.some(f=>f.name===n)){showToast(L("同じ名前のお気に入りがすでにあります","That name already exists",isBi),"warning");return;}
+    const nf={name:n,clockIn:form.clockIn,clockOut:form.clockOut,breaks:favRanges(form.breaks),travelTimes:isMono?favRanges(form.travelTimes):[]};
+    if(await save([...favs,nf],L("「"+n+"」をお気に入りに登録しました","Saved \""+n+"\"",isBi))){setRegOpen(false);setName("");}
+  };
+  const remove=async f=>{
+    if(!window.confirm(L("お気に入り「"+f.name+"」を消しますか？","Remove \""+f.name+"\"?",isBi)))return;
+    await save(favs.filter(x=>x.name!==f.name),L("「"+f.name+"」を消しました","Removed \""+f.name+"\"",isBi));
+  };
+  const chipSt={border:"1.5px solid #d97706",background:"white",color:"#1e3a5f",borderRadius:20,padding:"6px 12px",
+    fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:busy?"wait":"pointer",textAlign:"left",lineHeight:1.3};
+  const smallBtn={fontSize:11,padding:"2px 10px",borderRadius:20,border:"1.5px solid #d97706",background:"white",color:"#b45309",cursor:"pointer",fontWeight:700,fontFamily:"inherit"};
+  return e("div",{"data-testid":"fav-bar",style:{border:"1.5px dashed #f0b45a",background:"#fffaf0",borderRadius:12,padding:"10px 12px",marginBottom:14}},
+    // ↺ 前回と同じ
+    last&&e("button",{type:"button","data-testid":"fav-last",disabled:busy,onClick:()=>onApply(pick(last),L("前回（"+shortDateLabel(last.date)+"）と同じ時間を入れました。確認してから提出してください","Copied times from "+last.date+". Check before submitting.",isBi)),
+      style:{...chipSt,display:"block",width:"100%",borderStyle:"solid",marginBottom:10,background:"#fff7e6"}},
+      "↺ "+L("前回と同じ時間","Same as last time",isBi),
+      e("span",{style:{display:"block",fontSize:11,fontWeight:500,color:"#64748b"}},shortDateLabel(last.date)+"　"+favRangeText(last)+"・"+favBreakText(last,isBi))),
+    // ★ お気に入り
+    e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,marginBottom:8}},
+      e("span",{style:{fontSize:12,fontWeight:700,color:"#b45309"}},"★ "+L("お気に入り","Favorites",isBi)+"（"+favs.length+"/"+FAV_MAX+"）"),
+      favs.length>0&&!regOpen&&e("button",{type:"button","data-testid":"fav-edit",onClick:()=>setEditing(x=>!x),style:smallBtn},editing?L("完了","Done",isBi):L("編集","Edit",isBi))
+    ),
+    favs.length===0&&!regOpen&&e("div",{style:{fontSize:11.5,color:"#64748b",marginBottom:6}},
+      L("よく使う時間を登録しておくと、次から1回押すだけで入ります。時間を入れてから下の「★ 今の入力を登録」を押してください。","Save times you use often, then fill them in with one tap.",isBi)),
+    favs.length>0&&e("div",{style:{display:"flex",flexWrap:"wrap",gap:6}},
+      ...favs.map(f=>e("button",{key:f.name,type:"button","data-testid":"fav-chip",disabled:busy,
+        onClick:()=>editing?remove(f):onApply(pick(f),L("「"+f.name+"」の時間を入れました。確認してから提出してください","Filled in \""+f.name+"\". Check before submitting.",isBi)),
+        style:{...chipSt,borderColor:editing?"#dc2626":"#d97706"}},
+        f.name,editing&&e("span",{style:{color:"#dc2626",marginLeft:6}},"×"),
+        e("span",{style:{display:"block",fontSize:10.5,fontWeight:500,color:"#64748b"}},favRangeText(f)+"・"+favBreakText(f,isBi)+(favRanges(f.travelTimes).length?"・"+L("移動あり","Travel",isBi):""))))),
+    regOpen
+      ?e("div",{style:{display:"flex",gap:6,flexWrap:"wrap",marginTop:8,alignItems:"center"}},
+        e("span",{style:{fontSize:11.5,color:"#475569",flexBasis:"100%"}},L("登録する内容：","Saving: ",isBi)+favRangeText(form)+"・"+favBreakText(form,isBi)),
+        e("input",{type:"text","data-testid":"fav-name",value:name,maxLength:FAV_NAME_MAX,autoFocus:true,
+          onChange:ev=>setName(ev.target.value),onKeyDown:ev=>{if(ev.key==="Enter")register();},
+          placeholder:L("名前（例：通し・夜）","Name (e.g. Day shift)",isBi),className:"input-field",style:{flex:"1 1 140px",padding:"6px 10px"}}),
+        e("button",{type:"button","data-testid":"fav-save",className:"btn btn-primary",style:{fontSize:12,padding:"6px 14px"},disabled:busy,onClick:register},busy?L("保存中…","Saving…",isBi):L("登録","Save",isBi)),
+        e("button",{type:"button",className:"btn btn-outline",style:{fontSize:12,padding:"6px 14px"},disabled:busy,onClick:()=>setRegOpen(false)},L("やめる","Cancel",isBi)))
+      :!editing&&favs.length<FAV_MAX&&e("div",{style:{marginTop:8}},
+        e("button",{type:"button","data-testid":"fav-open",onClick:openReg,style:smallBtn},"★ "+L("今の入力を登録","Save current times",isBi))),
+    e("div",{style:{fontSize:11,color:"#94a3b8",marginTop:6}},
+      L("押すと店舗①の出勤・退勤・休憩が入ります（提出はされません）。","Fills in clock in/out and breaks (not submitted).",isBi))
+  );
+}
+
 // ===== RESET BUTTON =====
 function ResetButton({date,onConfirm}){
   const [confirming,setConfirming]=useState(false);
@@ -2281,7 +2401,7 @@ function ResetButton({date,onConfirm}){
   return e("button",{className:"btn btn-danger",style:{fontSize:13,padding:"7px 16px"},onClick:()=>setConfirming(true)},"リセット");
 }
 // ===== EMPLOYEE VIEW (共通：一般・管理者両方) =====
-function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView,ensureMonthLoaded}){
+function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView,ensureMonthLoaded,saveFavTimes}){
   const isAdmin=currentUser.role==="admin"||currentUser.role==="superadmin";
   const canSeePay=currentUser.role==="admin"||currentUser.role==="superadmin";
   const isBi=currentUser.bilingual===true||BILINGUAL_IDS.includes(currentUser.id);
@@ -2412,6 +2532,14 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
     if(outOfRange(sg.breaks).length>0)return pre+"勤務時間外の休憩があります。修正してください。";
     if(isMono&&outOfRange(sg.travelTimes).length>0)return pre+"勤務時間外の移動時間があります。修正してください。";
     return null;
+  };
+  // お気に入り・前回と同じ（追加修正㉘）：店舗①の出勤・退勤・休憩・移動を入れる（備考・店舗はそのまま。提出はしない）
+  const applyFavTimes=(t,msg)=>{
+    if(!canEdit0)return;
+    setForm(f=>({...f,clockIn:t.clockIn,clockOut:t.clockOut,
+      breaks:t.breaks&&t.breaks.length?t.breaks.map(x=>({...x})):[{start:"",end:""}],
+      travelTimes:t.travelTimes&&t.travelTimes.length?t.travelTimes.map(x=>({...x})):[{start:"",end:""}]}));
+    showToast(msg);
   };
   const doSave=(submit=true)=>{
     if(monthClosed){showToast("月締め済みのため入力できません","warning");return;}
@@ -2619,6 +2747,9 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
             e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()+1);if(formatDate(d)<=todayNow)changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"＋")
           )
         ),
+        // お気に入り・前回と同じ（追加修正㉘）。入力できるときだけ出す
+        canEdit0&&saveFavTimes&&e(FavTimesBar,{currentUser,isBi,form,selectedStore,editDate,empRecs:records[currentUser.id],
+          onApply:applyFavTimes,saveFavTimes,showToast}),
         // 出退勤
         e("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}},
           e("div",null,e("label",{style:{fontSize:12,color:"#64748b",fontWeight:700,display:"block",marginBottom:4}},L("出勤時刻","Clock In",isBi)),e("input",{type:"time",value:form.clockIn,onChange:ev=>{const v=ev.target.value;setForm(f=>({...f,clockIn:v}));checkExistingAfterClock(v,form.clockOut);},className:"input-field",disabled:!canEdit0})),
@@ -3440,6 +3571,26 @@ function App(){
       window.removeEventListener("focus",tryAutoReload);
     };
   },[reloading]);
+  // お気に入り時間の保存（2026年11月・追加修正㉘）。画面には先に反映し、GASに断られた・届かなかったときは元に戻す。
+  // 従業員設定の保存（saveOneStaff）とは別の通信（saveFavTimes）で、本人のお気に入りの列だけを書き換える。
+  // 保存の前後で lastStaffWriteAt を更新し、保存の途中に始まった読み込み（古い内容）で画面が戻らないようにする
+  const saveFavTimes=async favs=>{
+    const cu=currentUserRef.current;
+    if(!cu)return {success:false};
+    const before=cu.favTimes;
+    const inAdmins=admins.some(x=>x.id===cu.id);
+    const put=v=>{
+      setCUraw(prev=>prev&&prev.id===cu.id?{...prev,favTimes:v}:prev);
+      (inAdmins?setAdmins:setEmployees)(prev=>prev.map(x=>x.id===cu.id?{...x,favTimes:v}:x));
+    };
+    lastStaffWriteAt.current=Date.now();
+    put(favs);
+    let r=null;
+    try{r=await gasPost("saveFavTimes",{empId:cu.id,passHash:cu.passHash,favs});}catch(err){r=null;}
+    lastStaffWriteAt.current=Date.now();
+    if(!(r&&r.success!==false))put(before);
+    return r||{success:false};
+  };
   const setCurrentUser=emp=>{
     if(emp)saveLS("kintai_session",{empId:emp.id,role:emp.role,ts:Date.now()});
     else try{localStorage.removeItem("kintai_session");}catch{}
@@ -3713,7 +3864,7 @@ function App(){
     ),
     e("div",{style:{maxWidth:1100,margin:"0 auto",padding:"24px 20px"}},
       e("div",null,
-          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView,closesVersion,ensureMonthLoaded}),
+          (view==="employee")&&e(EmployeeView,{currentUser,setCurrentUser,onBack:handleBack,records,setRecords,getRecord,saveRecord,saveRecords,submitRecord,submitting,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,employees,setEmployees,admins,setAdmins,queueStaffOp,setView,closesVersion,ensureMonthLoaded,saveFavTimes}),
           (view==="dashboard")&&currentUser.role==="superadmin"&&e(AdminDashboard,{employees,setEmployees,admins,setAdmins,queueStaffOp,selectedMonth,setSelectedMonth,getMonthlySummary,showToast,currentUser,setCurrentUser,setView,closesVersion,applyWage})
         )
     ),
