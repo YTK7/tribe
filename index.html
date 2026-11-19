@@ -633,6 +633,34 @@ function wageFor(emp,date){
   return p.type==="monthly"?undefined:p.hourlyWage;
 }
 
+const BIZ_NOTE_UNTIL_MIN=300;
+const BIZ_EARLY_IN_MIN=240;
+const nowMinOf=d=>{const x=d||new Date();return x.getHours()*60+x.getMinutes();};
+
+function prevDateStr(dateStr){
+  const p=String(dateStr||"").split("-").map(Number);
+  if(p.length!==3||p.some(isNaN))return dateStr;
+  return formatDate(new Date(p[0],p[1]-1,p[2]-1));
+}
+
+function firstClockInMin(segs){
+  const p=segParts((segs||[]).filter(s=>s&&s.clockIn&&s.clockOut));
+  return p.length?p[0].s:null;
+}
+
+function shiftNotStarted(editDate,segs,today,nowMin){
+  if(!editDate||!today||editDate<today)return false;
+  const s=firstClockInMin(segs);
+  if(s==null)return false;
+  return editDate>today||s>nowMin;
+}
+
+function bizDayNoteNeeded(editDate,segs,today,nowMin){
+  if(!editDate||editDate!==today)return false;
+  const s=firstClockInMin(segs);
+  return nowMin<BIZ_NOTE_UNTIL_MIN||(s!=null&&(s<BIZ_EARLY_IN_MIN||s>nowMin));
+}
+
 function isMonorailWork(empId,store){
   return store==="モノレール";
 }
@@ -990,7 +1018,9 @@ function HelpModal({isAdmin,isOwner,onClose}){
       "17:00〜翌2:00の勤務なら、出勤17:00・退勤2:00と入れてください。自動で翌日の退勤として計算されます。"]),
 
     box("info",[e("b",{key:"b"},"0時を過ぎてから出勤した日は、その営業日の日付で。"),e("br",{key:"br"}),
-      "夜の営業（17:00〜翌4:00）は、日付が変わっても同じ1日として数えます。たとえば9/20の営業で、日付が変わった0:00から3:00まで働いたときは、対象日は「9/20」、出勤0:00・退勤3:00と入れてください（9/21にはしません）。"]),
+      "夜の営業（17:00〜翌4:00）は、日付が変わっても同じ1日として数えます。たとえば9/20の営業で、日付が変わった0:00から3:00まで働いたときは、対象日は「9/20」、出勤0:00・退勤3:00と入れてください（9/21にはしません）。",
+
+      e("br",{key:"br2"}),"0時を過ぎてから入力するときは、対象日の下に出る「対象日を前日にする」ボタンが使えます。出勤時刻がまだ来ていない勤務は提出できません。"]),
     box("warn",[e("b",{key:"b"},"提出を忘れずに。"),e("br",{key:"br"}),
       "入力しただけでは記録されません。かならず「提出する」を押してください。"]),
 
@@ -2216,8 +2246,10 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   const [editDate,setEditDate]=useState(todayStr);
 
   const [todayNow,setTodayNow]=useState(()=>formatDate(new Date()));
+
+  const [nowMin,setNowMin]=useState(()=>nowMinOf());
   useEffect(()=>{
-    const t=setInterval(()=>{const now=formatDate(new Date());setTodayNow(prev=>prev===now?prev:now);},60*1000);
+    const t=setInterval(()=>{const now=formatDate(new Date());setTodayNow(prev=>prev===now?prev:now);setNowMin(nowMinOf());},60*1000);
     return()=>clearInterval(t);
   },[]);
   const [form,setForm]=useState({clockIn:"",clockOut:"",breaks:[{start:"",end:""}],travelTimes:[{start:"",end:""}],note:""});
@@ -2274,9 +2306,12 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
 
   useEffect(()=>{ if(ensureMonthLoaded)ensureMonthLoaded(String(editDate).substring(0,7)); },[editDate]);
   const prevEditDateRef=useRef(editDate);
+  const keepFormOnceRef=useRef(false);
   useEffect(()=>{
     const dateChanged=editDate!==prevEditDateRef.current;
     prevEditDateRef.current=editDate;
+
+    if(dateChanged&&keepFormOnceRef.current){keepFormOnceRef.current=false;return;}
     const userEdited=formBaseRef.current!=null&&formSnap(form,selectedStore,extra)!==formBaseRef.current;
 
     if(!dateChanged&&userEdited&&canEdit)return;
@@ -2297,6 +2332,16 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
       "入力中の内容が提出されていません。日付を変更すると入力内容が消えます。よろしいですか？"))return;
     setEditDate(next);
   };
+
+  const moveToPrevDay=()=>{
+    const prev=prevDateStr(editDate);
+    if(!prev||prev===editDate)return;
+    const exists=!!(records[currentUser.id]&&records[currentUser.id][prev]);
+    if(exists||!hasUnsaved||isAdminClosed(currentUser.id,prev.substring(0,7))){changeDate(prev);return;}
+    keepFormOnceRef.current=true;
+    setEditDate(prev);
+    showToast("対象日を"+shortDateLabel(prev)+"にしました（入力した内容はそのままです）");
+  };
   const summary=getMonthlySummary(currentUser.id);
 
   const formSegs=()=>[{store:selectedStore,clockIn:form.clockIn,clockOut:form.clockOut,breaks:form.breaks,travelTimes:form.travelTimes,note:form.note},...extra];
@@ -2308,6 +2353,11 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   const spanBad=extra.length>0&&segsSpanTooLong(formSegs());
 
   const spanSort=extra.length>0&&!spanBad&&segsNeedSort(formSegs());
+
+  const notStarted=canEdit&&!spanBad&&shiftNotStarted(editDate,formSegs(),todayNow,nowMin);
+  const bizNote=canEdit0&&bizDayNoteNeeded(editDate,spanBad?[]:formSegs(),todayNow,nowMin);
+  const prevDay=prevDateStr(editDate);
+  const firstInText=()=>{const s=spanBad?null:firstClockInMin(formSegs());return s==null?"":fmtMin(s);};
 
   const checkSeg=(sg,label)=>{
     const pre=label?label+"：":"";
@@ -2355,6 +2405,14 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
 
     if(segsIn.length>1&&segsSpanTooLong(segsIn)){
       showToast("店舗の時間が重なっているか、店舗①の出勤から24時間以上にまたがっています。店舗は時間の早い順に入れてください。","warning");return;
+    }
+
+    {
+      const dn=new Date();
+      if(shiftNotStarted(editDate,segsIn,formatDate(dn),nowMinOf(dn))){
+        const s=firstClockInMin(segsIn);
+        showToast("この勤務はまだ始まっていません（対象日 "+shortDateLabel(editDate)+"・出勤 "+(s==null?"":fmtMin(s))+"／今の時刻 "+fmtMin(nowMinOf(dn))+"）。前の日の夜からの勤務は、対象日を前日にしてから提出してください。","warning");return;
+      }
     }
     if(rec.status==="approved"){showToast("承認済みのため修正できません","warning");return;}
 
@@ -2537,6 +2595,14 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
             e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()-1);changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"−"),
             e("input",{type:"date",value:editDate,onChange:ev=>changeDate(ev.target.value),className:"input-field",style:{flex:"1 1 auto",minWidth:0},max:todayNow}),
             e("button",{type:"button",onClick:()=>{const d=new Date(editDate);d.setDate(d.getDate()+1);if(formatDate(d)<=todayNow)changeDate(formatDate(d));},style:{width:34,height:38,borderRadius:8,border:"1.5px solid #d1d5db",background:"white",fontSize:16,fontWeight:700,color:"#1e3a5f",cursor:"pointer"}},"＋")
+          ),
+
+          bizNote&&e("div",{"data-testid":"biz-day-note",style:{background:"#fef9c3",borderRadius:8,padding:"8px 12px",marginTop:8,fontSize:12,color:"#854d0e",fontWeight:600,lineHeight:1.7}},
+            "ℹ "+L("対象日は合っていますか？ 夜の営業（17:00〜翌4:00）の分は、日付が変わっても前日の日付で入れます。","Is the date correct? Night shifts (17:00–4:00) go on the previous day's date.",isBi),
+            e("div",{style:{marginTop:6}},
+              e("button",{type:"button","data-testid":"set-prev-day",onClick:moveToPrevDay,
+                style:{fontSize:12,padding:"5px 12px",borderRadius:8,border:"1.5px solid #854d0e",background:"white",color:"#854d0e",cursor:"pointer",fontWeight:700,fontFamily:"inherit"}},
+                L("対象日を前日の "+shortDateLabel(prevDay)+" にする","Change to previous day "+shortDateLabel(prevDay),isBi)))
           )
         ),
 
@@ -2605,6 +2671,11 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
         ),
         spanBad&&e("div",{"data-testid":"span-warning",style:{background:"#fee2e2",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#991b1b",fontWeight:600}},
           "⚠ "+L("店舗の時間が重なっているか、店舗①の出勤から24時間以上にまたがっています。店舗は時間の早い順に入れてください（このままでは提出できません）。","Store times overlap or span 24 hours or more. Enter stores in time order.",isBi)
+        ),
+
+        notStarted&&e("div",{"data-testid":"not-started-warning",style:{background:"#fee2e2",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#991b1b",fontWeight:600}},
+          "⚠ "+L("対象日（"+shortDateLabel(editDate)+"）の出勤時刻（"+firstInText()+"）がまだ来ていないため、このままでは提出できません。前の日の夜からの勤務は、対象日を前日にしてください。",
+            "This shift has not started yet on the selected date. For a shift that began last night, change the date to the previous day.",isBi)
         ),
 
         (()=>{
