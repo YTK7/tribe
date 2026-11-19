@@ -698,7 +698,16 @@ function effStatus(rec){return isMultiSeg(rec)?segsDayStatus(rec.segs):(rec?rec.
 
 function fmtMin(m){const x=((m%1440)+1440)%1440;return String(Math.floor(x/60)).padStart(2,"0")+":"+String(x%60).padStart(2,"0");}
 
-function segParts(segs){
+function segTooLong(p){return p.length>1&&(p[p.length-1].e-p[0].s)>=1440;}
+function segOrderFor(segs){
+  if(!segs||segs.length<2||!segTooLong(segPartsRaw(segs)))return segs;
+  const sorted=segs.map((s,i)=>({s,i,t:toMin(s.clockIn)})).sort((a,b)=>(a.t==null?1e9:a.t)-(b.t==null?1e9:b.t)||a.i-b.i).map(x=>x.s);
+  return segTooLong(segPartsRaw(sorted))?segs:sorted;
+}
+
+function segsNeedSort(segs){return !!segs&&segs.length>1&&segOrderFor(segs)!==segs;}
+function segParts(segs){return segPartsRaw(segOrderFor(segs));}
+function segPartsRaw(segs){
   const parts=[];let prevEnd=null;
   segs.forEach(s=>{
     let si=toMin(s.clockIn),so=toMin(s.clockOut);
@@ -729,7 +738,8 @@ function withDayFields(rec,segsIn){
   });
   for(let j=1;j<parts.length;j++){ if(parts[j].s>parts[j-1].e)breaks.push({start:fmtMin(parts[j-1].e),end:fmtMin(parts[j].s)}); }
   const lastRej=[...segs].reverse().find(s=>s.status==="rejected");
-  return {...rec,segs,store:segs[0].store,clockIn:segs[0].clockIn,clockOut:parts.length?parts[parts.length-1].seg.clockOut:segs[segs.length-1].clockOut,
+
+  return {...rec,segs,store:segs[0].store,clockIn:(parts.length&&segOrderFor(segs)!==segs)?parts[0].seg.clockIn:segs[0].clockIn,clockOut:parts.length?parts[parts.length-1].seg.clockOut:segs[segs.length-1].clockOut,
     breaks,travelTimes:travels,note:notes.join(" / "),status:segsDayStatus(segs),
     approvedBy:approvers.join("・")||undefined,approvedAt:segs.find(s=>s.approvedAt)?.approvedAt,
     rejectReason:reasons.join(" / ")||undefined,rejectBy:lastRej?(lastRej.rejectBy||undefined):undefined,rejectAt:lastRej?(lastRej.rejectAt||undefined):undefined};
@@ -2294,6 +2304,8 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
 
   const spanBad=extra.length>0&&segsSpanTooLong(formSegs());
 
+  const spanSort=extra.length>0&&!spanBad&&segsNeedSort(formSegs());
+
   const checkSeg=(sg,label)=>{
     const pre=label?label+"：":"";
     if(!sg.clockIn||!sg.clockOut)return pre+"出勤・退勤時刻を入力してください";
@@ -2318,8 +2330,12 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
   };
   const doSave=(submit=true)=>{
     if(monthClosed){showToast("月締め済みのため入力できません","warning");return;}
-    const segsIn=formSegs();
+    let segsIn=formSegs();
     const multi=extra.length>0||isMultiSeg(rec);
+
+    const hasApprovedSeg=!!(savedSegs&&savedSegs.some(s=>s.status==="approved"));
+    const sortedOnSubmit=!hasApprovedSeg&&segsNeedSort(segsIn);
+    if(sortedOnSubmit)segsIn=segOrderFor(segsIn);
     for(let i=0;i<segsIn.length;i++){
 
       if(i>0&&!segsIn[i].store){showToast("店舗"+"①②③"[i]+"の店舗を選んでください。","warning");return;}
@@ -2581,6 +2597,9 @@ function EmployeeView({currentUser,setCurrentUser,onBack,records,setRecords,getR
           "⚠ 出勤と退勤が同じ時刻です。このままでは提出できません。時刻を確認してください。"
         ),
 
+        spanSort&&e("div",{"data-testid":"span-sort-note",style:{background:"#fef9c3",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#854d0e",fontWeight:600}},
+          "ℹ "+L("店舗の順番が時間の順と逆になっています。提出すると、時間の早い順に並べ替えて保存します（金額は変わりません）。","Stores are not in time order. They will be sorted by time when you submit.",isBi)
+        ),
         spanBad&&e("div",{"data-testid":"span-warning",style:{background:"#fee2e2",borderRadius:8,padding:"8px 14px",marginBottom:8,fontSize:12,color:"#991b1b",fontWeight:600}},
           "⚠ "+L("店舗の時間が重なっているか、店舗①の出勤から24時間以上にまたがっています。店舗は時間の早い順に入れてください（このままでは提出できません）。","Store times overlap or span 24 hours or more. Enter stores in time order.",isBi)
         ),
